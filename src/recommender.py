@@ -266,7 +266,10 @@ class MusicRecommender:
             self._imprimir_resultados(f"PRECISIÓN PSICOLÓGICA ({cantidad_resultados} tracks)", recomendaciones)
             
             radar_cols = [c for c in ['valence', 'energy', 'danceability', 'acousticness', 'liveness'] if c in self.caracteristicas]
-            dna_target = cancion_mental[radar_cols].iloc[0].to_dict()
+            if artistas_detectados:
+                dna_target = discografia_inspiradora[radar_cols].mean().to_dict()
+            else:
+                dna_target = cancion_mental[radar_cols].iloc[0].to_dict()
             dna_recs = recomendaciones[radar_cols].mean().to_dict()
             
             return {
