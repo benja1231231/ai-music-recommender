@@ -18,7 +18,7 @@ A diferencia de recomendadores básicos, este motor no utiliza simples "Tags" de
 ### ⚡ Modelo de Puntuación Híbrido Ponderado (Hybrid Scoring)
 El núcleo utiliza una arquitectura de *Weighted Composite Scoring*:
 ```python
-Hybrid_Rank = (Acoustic_DNA_Match * 0.65) + (Global_Popularity * 0.35)
+Hybrid_Rank = (Acoustic_DNA_Match * 0.50) + (Global_Popularity * 0.50)
 ```
 La red captura algoritmicamente una colisión balanceada (Stateless) donde compiten las 1,200,000 pistas, evaluando de forma simultánea precisión geométrica contra el prestigio global del artista.
 
