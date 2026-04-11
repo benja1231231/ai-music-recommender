@@ -1,0 +1,29 @@
+# Entornos Virtuales
+venv/
+env/
+.venv/
+
+# Variables de Entorno (¡CRÍTICO PARA SEGURIDAD!)
+.env
+.env.local
+
+# Bases de Datos y Datasets Locales (Límite de 100MB de Github)
+data/*.csv
+data/*.db
+data/*.sqlite
+dataset.csv
+spotify_data.csv
+
+# Caché de Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Logs
+*.log
+
+# Entorno de Sistema Operativo
+.DS_Store
+Thumbs.db

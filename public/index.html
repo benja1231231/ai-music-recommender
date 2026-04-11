@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Music Recommender</title>
+    <!-- Modern Typography -->
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="blob-bg"></div>
+    
+    <div class="glass-container main-wrapper">
+        <header>
+            <h1>AI Music <span class="accent">Recommender</span></h1>
+            <p>Conectando matemáticas complejas y psicología (NLP) con tu música.</p>
+        </header>
+
+        <main>
+            <div class="search-section">
+                <div class="tabs">
+                    <button class="tab active" data-mode="nlp">🧠 Mood Textual</button>
+                    <button class="tab" data-mode="contenido">🎸 Artista Exacto</button>
+                </div>
+                
+                <div class="input-group">
+                    <input type="text" id="searchInput" placeholder="Ej: quiero música alegre para el gym sin voces...">
+                    <button id="searchBtn">Descubrir</button>
+                </div>
+            </div>
+
+            <div class="loader-container hidden" id="loader">
+                <div class="spinner"></div>
+                <p>Calculando Coordenadas del Espacio 9-Dimensional...</p>
+            </div>
+
+            <!-- Dashboard de Resultados y Gráfica -->
+            <div class="results-wrapper hidden" id="resultsWrapper">
+                <div class="chart-container">
+                    <canvas id="dnaChart"></canvas>
+                </div>
+                
+                <div class="results-grid" id="resultsGrid">
+                    <!-- Cards inject here -->
+                </div>
+            </div>
+            
+            <div class="error-msg hidden" id="errorMsg"></div>
+        </main>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
