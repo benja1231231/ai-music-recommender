@@ -259,7 +259,7 @@ class MusicRecommender:
             df_resultados['match_percent'] = df_resultados['distancia'].apply(
                 lambda d: min(100.0, max(1.0, 100.0 - (d * 12.0)))
             )
-            df_resultados['hybrid_score'] = (df_resultados['match_percent'] * 0.65) + (df_resultados['popularity'] * 0.35)
+            df_resultados['hybrid_score'] = (df_resultados['match_percent'] * 0.99) + (df_resultados['popularity'] * 0.01)
             
             recomendaciones = df_resultados.sort_values(by='hybrid_score', ascending=False).head(cantidad_resultados).copy()
             
