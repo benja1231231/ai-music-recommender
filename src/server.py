@@ -20,12 +20,17 @@ app.add_middleware(
 
 print("Iniciando Motor AI para Web...")
 motor = MusicRecommender()
-engine_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'data', 'spotify_data.csv'))
-try:
+
+# Intentar múltiples rutas para el dataset
+engine_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'spotify_data.csv')
+alt_path = "/app/data/spotify_data.csv"
+
+if os.path.exists(engine_path):
     motor.preparar_dataset(engine_path)
-except Exception as e:
-    print(f"Advertencia: {e}")
-    # Intenta con ruta generica si falla
+elif os.path.exists(alt_path):
+    motor.preparar_dataset(alt_path)
+else:
+    print(f"⚠️ Dataset no encontrado en {engine_path}. Cargando modo prueba.")
     motor.preparar_dataset()
 
 from typing import Optional
