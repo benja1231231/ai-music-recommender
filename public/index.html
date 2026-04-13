@@ -24,6 +24,7 @@
                 <div class="tabs">
                     <button class="tab active" data-mode="nlp">🧠 Mood Textual</button>
                     <button class="tab" data-mode="contenido">🎸 Artista Exacto</button>
+                    <button class="tab" data-mode="spotify_import">🟢 Importar Playlist</button>
                 </div>
                 
                 <div class="input-group">
@@ -37,14 +38,18 @@
                 <p>Calculando Coordenadas del Espacio 9-Dimensional...</p>
             </div>
 
-            <!-- Dashboard de Resultados y Gráfica -->
             <div class="results-wrapper hidden" id="resultsWrapper">
                 <div class="chart-container">
                     <canvas id="dnaChart"></canvas>
                 </div>
                 
-                <div class="results-grid" id="resultsGrid">
-                    <!-- Cards inject here -->
+                <div class="results-grid-container">
+                    <div class="results-header">
+                        <button id="exportBtn" class="btn-export hidden">🚀 Exportar 15 Recomendaciones a Spotify</button>
+                    </div>
+                    <div class="results-grid" id="resultsGrid">
+                        <!-- Cards inject here -->
+                    </div>
                 </div>
             </div>
             

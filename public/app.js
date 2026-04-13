@@ -1,5 +1,6 @@
 let currentMode = 'nlp';
 let radarChartInstance = null;
+let currentRecommendations = [];
 
 // Lógica Visual de las Pestañas
 document.querySelectorAll('.tab').forEach(tab => {
@@ -11,8 +12,10 @@ document.querySelectorAll('.tab').forEach(tab => {
         const input = document.getElementById('searchInput');
         if(currentMode === 'nlp') {
             input.placeholder = "Ej: quiero música alegre para entrenar...";
-        } else {
+        } else if(currentMode === 'contenido') {
             input.placeholder = "Escribe un artista exacto (ej: Queen o Coldplay)...";
+        } else if(currentMode === 'spotify_import') {
+            input.placeholder = "Pega el link de una playlist de Spotify pública...";
         }
     });
 });
@@ -22,19 +25,27 @@ document.getElementById('searchInput').addEventListener('keypress', (e) => {
     if(e.key === 'Enter') performSearch();
 });
 
+document.getElementById('exportBtn').addEventListener('click', () => exportToSpotify());
+
 // Lógica Funcional Async a Backend Python
 async function performSearch(overrideType = null, overrideIndex = null) {
+    console.log("🚀 performSearch iniciada");
     const query = document.getElementById('searchInput').value.trim();
-    if(!query) return;
+    if(!query) {
+        console.warn("⚠️ Query vacía");
+        return;
+    }
 
     const loader = document.getElementById('loader');
     const wrapper = document.getElementById('resultsWrapper');
     const errorMsg = document.getElementById('errorMsg');
+    const exportBtn = document.getElementById('exportBtn');
     
     // Ocultar modal si existe
     closeModal();
 
     wrapper.classList.add('hidden');
+    exportBtn.classList.add('hidden');
     errorMsg.classList.add('hidden');
     loader.classList.remove('hidden');
 
@@ -46,6 +57,7 @@ async function performSearch(overrideType = null, overrideIndex = null) {
         if(overrideType) payload.override_type = overrideType;
         if(overrideIndex !== null) payload.override_index = overrideIndex;
 
+        console.log("📡 Enviando fetch a /api/recommend", payload);
         const response = await fetch('/api/recommend', {
             method: 'POST',
             headers: {
@@ -54,25 +66,94 @@ async function performSearch(overrideType = null, overrideIndex = null) {
             body: JSON.stringify(payload)
         });
 
+        console.log("📥 Respuesta recibida de fetch", response);
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error("❌ HTTP Error:", response.status, errorText);
+            throw new Error(`Servidor respondió con error ${response.status}: ${errorText || "Error interno"}`);
+        }
+
         const data = await response.json();
+        console.log("📦 Data parseada:", data);
 
         if(data.status === 'success') {
+            currentRecommendations = data.data;
+            console.log("✅ Recomendaciones recibidas:", currentRecommendations.length);
+            
+            // Mostrar el contenedor de resultados
+            wrapper.classList.remove('hidden');
+            wrapper.style.setProperty('display', 'flex', 'important'); 
+
+            // Forzar render del grid y chart si wrapper estaba oculto
+            console.log("🎨 Forzando render de grid y chart");
             renderCards(data.data);
             if(data.chart_data && Object.keys(data.chart_data).length > 0) {
-                renderChart(data.chart_data);
+                if (typeof Chart === 'undefined') {
+                    console.error("❌ Chart.js no cargado. Revisa conexión a internet.");
+                    errorMsg.textContent = "❌ Error: Librería de gráficos no cargada (Chart.js).";
+                    errorMsg.classList.remove('hidden');
+                } else {
+                    renderChart(data.chart_data);
+                }
             }
-            wrapper.classList.remove('hidden');
+
+            // Mostrar el botón de exportar si hay resultados
+            if(currentRecommendations.length > 0) {
+                console.log("🚀 Mostrando botón de exportar");
+                exportBtn.classList.remove('hidden');
+                exportBtn.style.setProperty('display', 'flex', 'important'); 
+            } else {
+                console.warn("⚠️ No hay recomendaciones para exportar.");
+            }
         } else if (data.status === 'conflict') {
             showConflictModal(data);
         } else {
+            console.error("❌ Backend error:", data.message);
             errorMsg.textContent = data.message;
             errorMsg.classList.remove('hidden');
         }
     } catch (err) {
-        errorMsg.textContent = "❌ Error de conexión. ¿Está corriendo el servidor FastAPI?";
+        console.error("💥 Critical JS/Network error:", err);
+        errorMsg.textContent = `❌ Error: ${err.message || "Error desconocido"}`;
         errorMsg.classList.remove('hidden');
     } finally {
         loader.classList.add('hidden');
+    }
+}
+
+async function exportToSpotify() {
+    if(currentRecommendations.length === 0) return;
+    
+    const exportBtn = document.getElementById('exportBtn');
+    const originalText = exportBtn.innerText;
+    exportBtn.disabled = true;
+    exportBtn.innerText = "⏳ Exportando...";
+
+    try {
+        const payload = {
+            playlist_name: `AI Recs: ${document.getElementById('searchInput').value.substring(0, 20)}`,
+            tracks: currentRecommendations.map(t => ({ track_name: t.track_name, artist: t.artist }))
+        };
+
+        const response = await fetch('/api/export', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        });
+
+        const data = await response.json();
+        if(data.status === 'success') {
+            alert("✅ ¡Éxito! La playlist ha sido creada en tu cuenta de Spotify.");
+        } else {
+            alert("❌ Error: " + data.message);
+        }
+    } catch (err) {
+        alert("❌ Error de conexión al exportar.");
+    } finally {
+        exportBtn.disabled = false;
+        exportBtn.innerText = originalText;
     }
 }
 

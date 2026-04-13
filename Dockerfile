@@ -24,5 +24,5 @@ COPY . .
 EXPOSE 8000
 
 # Comando para ejecutar la aplicación en producción
-# Usamos Gunicorn con el worker de Uvicorn para mayor estabilidad
-CMD ["gunicorn", "src.server:app", "--workers", "2", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000"]
+# Aumentamos el timeout a 120s para permitir la carga del dataset en el primer inicio
+CMD ["gunicorn", "src.server:app", "--workers", "1", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--timeout", "120"]
