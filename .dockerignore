@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+.venv
+env/
+venv/
+.pytest_cache/
+
+# Data Cache
+.cache/
+
+# Git
+.git/
+.gitattributes
+.gitignore
+
+# Project Specific
+.agents/
+skills-lock.json
+README.md
+
+# OS files
+.DS_Store
+Thumbs.db
