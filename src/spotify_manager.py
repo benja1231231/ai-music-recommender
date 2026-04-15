@@ -13,6 +13,7 @@ class SpotifyManager:
     """
     def __init__(self):
         self.user_id = None
+        self.sp = None
         # Asegurar lectura del .env en el directorio raíz absoluto
         root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
         env_path = os.path.join(root_dir, '.env')
@@ -42,14 +43,27 @@ class SpotifyManager:
             client_secret=client_secret,
             redirect_uri=redirect_uri,
             scope=self.oauth_scope,
-            open_browser=False,
+            open_browser=True,
+            cache_path=".cache",
             show_dialog=True
         )
         self.client_credentials = SpotifyClientCredentials(
             client_id=client_id,
             client_secret=client_secret
         )
-        print("   [OK] SpotifyManager inicializado en modo web.")
+        try:
+            # Modo local/autónomo: intenta autenticar al iniciar con cache OAuth.
+            self.sp = spotipy.Spotify(auth_manager=self.oauth)
+            user_info = self.sp.current_user()
+            if user_info:
+                self.user_id = user_info.get("id")
+                print(f"   [OK] Conectado a Spotify como: {user_info.get('display_name', self.user_id)}")
+            else:
+                print("   [WARN] Spotify inicializado pero sin usuario detectado.")
+        except Exception as e:
+            print(f"   [WARN] Spotify web/local no autenticado al inicio: {e}")
+
+        print("   [OK] SpotifyManager inicializado.")
 
     def get_authorize_url(self, state: Optional[str] = None):
         return self.oauth.get_authorize_url(state=state)
@@ -81,13 +95,17 @@ class SpotifyManager:
             return None, None
         return sp.current_user(), token_info
 
-    def exportar_recomendaciones_a_playlist(self, nombre_playlist, dataframe_resultados, token_info: dict):
-        sp, token_info = self.get_user_client(token_info)
+    def exportar_recomendaciones_a_playlist(self, nombre_playlist, dataframe_resultados, token_info: Optional[dict] = None):
+        sp = None
+        if token_info:
+            sp, token_info = self.get_user_client(token_info)
+        elif self.sp:
+            sp = self.sp
         if not sp:
             return {
                 "status": "error",
-                "message": "Sesión de Spotify inválida. Vuelve a conectar tu cuenta.",
-                "token_info": None
+                "message": "Spotify no autenticado. Revisa .env y completa autorización local al iniciar.",
+                "token_info": token_info
             }
 
         if "http" in nombre_playlist:
@@ -139,6 +157,8 @@ class SpotifyManager:
             # Si no, se usa cliente público (solo playlists públicas).
             if token_info:
                 sp, token_info = self.get_user_client(token_info)
+            elif self.sp:
+                sp = self.sp
             else:
                 sp = self.get_public_client()
             if not sp:

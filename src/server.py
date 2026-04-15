@@ -104,8 +104,6 @@ async def export_to_spotify(request_data: ExportRequest, request: Request):
         return {"status": "error", "message": "Spotify no configurado en el servidor."}
 
     spotify_token = request.session.get("spotify_token")
-    if not spotify_token:
-        return {"status": "error", "message": "Conecta tu cuenta de Spotify antes de exportar."}
     
     try:
         df_export = pd.DataFrame(request_data.tracks)
@@ -151,6 +149,16 @@ async def spotify_status(request: Request):
     if not motor.spotify:
         return {"status": "error", "connected": False, "message": "Spotify no configurado."}
     token_info = request.session.get("spotify_token")
+    if not token_info and getattr(motor.spotify, "user_id", None):
+        return {
+            "status": "success",
+            "connected": True,
+            "user": {
+                "id": motor.spotify.user_id,
+                "display_name": motor.spotify.user_id
+            },
+            "mode": "server_local"
+        }
     if not token_info:
         return {"status": "success", "connected": False}
     user_info, refreshed_token = motor.spotify.get_current_user(token_info)
