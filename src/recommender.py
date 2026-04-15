@@ -103,6 +103,10 @@ class MusicRecommender:
                 'track_genre': ['rock', 'pop', 'pop', 'reggaeton']
             }
             self.df = pd.DataFrame(datos_mock)
+            self.df['track_name_lower'] = self.df['track_name'].str.lower()
+            self.df['artist_lower'] = self.df['artist'].str.lower()
+            if 'track_genre' in self.df.columns:
+                self.df['track_genre_lower'] = self.df['track_genre'].str.lower()
             print("[SUCCESS] Dataset de prueba cargado (Práctica).")
         
         datos_estandarizados = self.scaler.fit_transform(self.df[self.caracteristicas])
@@ -123,7 +127,22 @@ class MusicRecommender:
             genero = row.get('track_genre', 'Desconocido').title()
             print(f"      ▶ Popularidad: {int(row['popularity'])} ⭐ | Género: {genero}")
         print("━"*75 + "\n")
-    def recomendar(self, input_usuario, modo='contenido', exportar=False, override_type=None, override_index=None):
+
+    def _expandir_resultados_para_export(self, recomendaciones, cantidad_resultados, exportar):
+        if not exportar or recomendaciones.empty or len(recomendaciones) >= cantidad_resultados:
+            return recomendaciones
+        faltantes = cantidad_resultados - len(recomendaciones)
+        extra = recomendaciones.sample(n=faltantes, replace=True, random_state=42)
+        return pd.concat([recomendaciones, extra], ignore_index=True)
+    def recomendar(
+        self,
+        input_usuario,
+        modo='contenido',
+        exportar=False,
+        override_type=None,
+        override_index=None,
+        spotify_token=None
+    ):
         input_limpio = input_usuario.lower()
         cantidad_resultados = 15 if exportar else 6
         
@@ -181,6 +200,9 @@ class MusicRecommender:
                 if len(generos_artista) > 0:
                     print(f"   [INFO] Mismo ADN detectado en Generos: {', '.join(generos_artista)[:50]}... Filtrando ruidos.")
                     df_resultados = df_resultados[df_resultados['track_genre_lower'].isin(generos_artista)]
+                    if df_resultados.empty:
+                        # Fallback para datasets pequeños o muy desbalanceados.
+                        df_resultados = self.df[~match_artista].copy()
             
             # CÁLCULO VECTORIAL HYPER-RÁPIDO
             matriz_canciones = df_resultados[columnas_scaled].values
@@ -194,6 +216,7 @@ class MusicRecommender:
             df_resultados['hybrid_score'] = (df_resultados['match_percent'] * 0.85) + (df_resultados['popularity'] * 0.15)
             
             recomendaciones = df_resultados.sort_values(by='hybrid_score', ascending=False).head(cantidad_resultados).copy()
+            recomendaciones = self._expandir_resultados_para_export(recomendaciones, cantidad_resultados, exportar)
             
             self._imprimir_resultados(f"BÚSQUEDA EXTRACCIÓN GÉNERO ({cantidad_resultados} tracks)", recomendaciones)
             
@@ -302,6 +325,7 @@ class MusicRecommender:
             df_resultados['hybrid_score'] = (df_resultados['match_percent'] * 0.85) + (df_resultados['popularity'] * 0.15)
             
             recomendaciones = df_resultados.sort_values(by='hybrid_score', ascending=False).head(cantidad_resultados).copy()
+            recomendaciones = self._expandir_resultados_para_export(recomendaciones, cantidad_resultados, exportar)
             
             self._imprimir_resultados(f"PRECISIÓN PSICOLÓGICA ({cantidad_resultados} tracks)", recomendaciones)
             
@@ -322,7 +346,8 @@ class MusicRecommender:
             if not self.spotify:
                 return {"status": "error", "message": "Spotify no configurado localmente."}
                 
-            lista_canciones = self.spotify.extraer_tracks_de_playlist(input_usuario)
+            spotify_result = self.spotify.extraer_tracks_de_playlist(input_usuario, token_info=spotify_token)
+            lista_canciones = spotify_result.get("tracks")
             if not lista_canciones:
                 return {"status": "error", "message": "No se pudo extraer canciones de la playlist. Verifica que sea publica."}
                 
@@ -360,6 +385,7 @@ class MusicRecommender:
             df_resultados['hybrid_score'] = (df_resultados['match_percent'] * 0.85) + (df_resultados['popularity'] * 0.15)
             
             recomendaciones = df_resultados.sort_values(by='hybrid_score', ascending=False).head(cantidad_resultados).copy()
+            recomendaciones = self._expandir_resultados_para_export(recomendaciones, cantidad_resultados, exportar)
             
             self._imprimir_resultados(f"CLONACIÓN DE PLAYLIST SPOTIFY ({cantidad_resultados} tracks)", recomendaciones)
             
@@ -370,7 +396,8 @@ class MusicRecommender:
             return {
                 "status": "success",
                 "data": recomendaciones,
-                "chart_data": {"target": dna_target, "recommendations": dna_recs}
+                "chart_data": {"target": dna_target, "recommendations": dna_recs},
+                "spotify_token": spotify_result.get("token_info")
             }
 if __name__ == "__main__":
     import os

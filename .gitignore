@@ -21,6 +21,9 @@ __pycache__/
 *.pyd
 .Python
 
+# Caché de Spotify OAuth (contiene tokens de acceso)
+.cache
+
 # Logs
 *.log
 

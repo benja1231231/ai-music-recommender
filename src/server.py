@@ -1,6 +1,8 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.sessions import SessionMiddleware
 from pydantic import BaseModel
 import uvicorn
 import os
@@ -12,9 +14,11 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from recommender import MusicRecommender
 
 app = FastAPI(title="AI Music Recommender API")
+session_secret = os.getenv("APP_SESSION_SECRET", "change-this-in-production")
+app.add_middleware(SessionMiddleware, secret_key=session_secret, same_site="lax")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=os.getenv("CORS_ALLOWED_ORIGINS", "*").split(","),
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -44,15 +48,17 @@ class ExportRequest(BaseModel):
     tracks: list # Lista de dicts con track_name y artist
 
 @app.post("/api/recommend")
-async def recommend(request: QueryRequest):
-    print(f"Buscando: '{request.query}' en modo: {request.mode}")
+async def recommend(request_data: QueryRequest, request: Request):
+    print(f"Buscando: '{request_data.query}' en modo: {request_data.mode}")
     try:
+        spotify_token = request.session.get("spotify_token")
         resultado = motor.recomendar(
-            request.query, 
-            modo=request.mode, 
+            request_data.query,
+            modo=request_data.mode,
             exportar=True, # Forzar 15 resultados siempre para que exportar funcione bien
-            override_type=request.override_type, 
-            override_index=request.override_index
+            override_type=request_data.override_type,
+            override_index=request_data.override_index,
+            spotify_token=spotify_token
         )
         
         if isinstance(resultado, dict):
@@ -93,16 +99,78 @@ async def recommend(request: QueryRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/export")
-async def export_to_spotify(request: ExportRequest):
+async def export_to_spotify(request_data: ExportRequest, request: Request):
     if not motor.spotify:
         return {"status": "error", "message": "Spotify no configurado en el servidor."}
+
+    spotify_token = request.session.get("spotify_token")
+    if not spotify_token:
+        return {"status": "error", "message": "Conecta tu cuenta de Spotify antes de exportar."}
     
     try:
-        df_export = pd.DataFrame(request.tracks)
-        motor.spotify.exportar_recomendaciones_a_playlist(request.playlist_name, df_export)
-        return {"status": "success", "message": "¡Playlist creada con éxito!"}
+        df_export = pd.DataFrame(request_data.tracks)
+        result = motor.spotify.exportar_recomendaciones_a_playlist(
+            request_data.playlist_name,
+            df_export,
+            spotify_token
+        )
+        if result.get("token_info"):
+            request.session["spotify_token"] = result["token_info"]
+        if result.get("status") == "success":
+            return {
+                "status": "success",
+                "message": result["message"],
+                "playlist_url": result.get("playlist_url")
+            }
+        return {"status": "error", "message": result.get("message", "Error exportando playlist")}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+@app.get("/api/spotify/login")
+async def spotify_login():
+    if not motor.spotify:
+        raise HTTPException(status_code=503, detail="Spotify no configurado en este servidor.")
+    auth_url = motor.spotify.get_authorize_url()
+    return {"status": "success", "auth_url": auth_url}
+
+@app.get("/api/spotify/callback")
+async def spotify_callback(code: str, request: Request):
+    if not motor.spotify:
+        raise HTTPException(status_code=503, detail="Spotify no configurado en este servidor.")
+    try:
+        token_info = motor.spotify.exchange_code(code)
+        request.session["spotify_token"] = token_info
+        frontend_redirect = os.getenv("FRONTEND_URL", "/")
+        return RedirectResponse(url=f"{frontend_redirect}?spotify=connected")
+    except Exception as e:
+        frontend_redirect = os.getenv("FRONTEND_URL", "/")
+        return RedirectResponse(url=f"{frontend_redirect}?spotify=error&message={str(e)}")
+
+@app.get("/api/spotify/status")
+async def spotify_status(request: Request):
+    if not motor.spotify:
+        return {"status": "error", "connected": False, "message": "Spotify no configurado."}
+    token_info = request.session.get("spotify_token")
+    if not token_info:
+        return {"status": "success", "connected": False}
+    user_info, refreshed_token = motor.spotify.get_current_user(token_info)
+    if refreshed_token:
+        request.session["spotify_token"] = refreshed_token
+    if not user_info:
+        return {"status": "success", "connected": False}
+    return {
+        "status": "success",
+        "connected": True,
+        "user": {
+            "id": user_info.get("id"),
+            "display_name": user_info.get("display_name") or user_info.get("id")
+        }
+    }
+
+@app.post("/api/spotify/logout")
+async def spotify_logout(request: Request):
+    request.session.pop("spotify_token", None)
+    return {"status": "success", "connected": False}
 
 frontend_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'public'))
 if not os.path.exists(frontend_path):

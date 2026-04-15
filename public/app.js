@@ -1,6 +1,11 @@
 let currentMode = 'nlp';
 let radarChartInstance = null;
 let currentRecommendations = [];
+const API_BASE_URL = (window.APP_CONFIG && window.APP_CONFIG.API_BASE_URL) ? window.APP_CONFIG.API_BASE_URL : '';
+
+function apiUrl(path) {
+    return `${API_BASE_URL}${path}`;
+}
 
 // Lógica Visual de las Pestañas
 document.querySelectorAll('.tab').forEach(tab => {
@@ -26,6 +31,9 @@ document.getElementById('searchInput').addEventListener('keypress', (e) => {
 });
 
 document.getElementById('exportBtn').addEventListener('click', () => exportToSpotify());
+document.getElementById('spotifyConnectBtn').addEventListener('click', () => connectSpotify());
+document.getElementById('spotifyDisconnectBtn').addEventListener('click', () => disconnectSpotify());
+refreshSpotifyStatus();
 
 // Lógica Funcional Async a Backend Python
 async function performSearch(overrideType = null, overrideIndex = null) {
@@ -58,11 +66,12 @@ async function performSearch(overrideType = null, overrideIndex = null) {
         if(overrideIndex !== null) payload.override_index = overrideIndex;
 
         console.log("📡 Enviando fetch a /api/recommend", payload);
-        const response = await fetch('/api/recommend', {
+        const response = await fetch(apiUrl('/api/recommend'), {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
+            credentials: 'include',
             body: JSON.stringify(payload)
         });
 
@@ -135,17 +144,19 @@ async function exportToSpotify() {
             tracks: currentRecommendations.map(t => ({ track_name: t.track_name, artist: t.artist }))
         };
 
-        const response = await fetch('/api/export', {
+        const response = await fetch(apiUrl('/api/export'), {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
+            credentials: 'include',
             body: JSON.stringify(payload)
         });
 
         const data = await response.json();
         if(data.status === 'success') {
-            alert("✅ ¡Éxito! La playlist ha sido creada en tu cuenta de Spotify.");
+            const urlMsg = data.playlist_url ? `\n${data.playlist_url}` : "";
+            alert(`✅ ${data.message || "Playlist creada con éxito."}${urlMsg}`);
         } else {
             alert("❌ Error: " + data.message);
         }
@@ -154,6 +165,54 @@ async function exportToSpotify() {
     } finally {
         exportBtn.disabled = false;
         exportBtn.innerText = originalText;
+    }
+}
+
+async function connectSpotify() {
+    try {
+        const response = await fetch(apiUrl('/api/spotify/login'), { credentials: 'include' });
+        const data = await response.json();
+        if (data.status !== 'success' || !data.auth_url) {
+            throw new Error(data.message || 'No se pudo iniciar Spotify OAuth.');
+        }
+        window.location.href = data.auth_url;
+    } catch (err) {
+        alert(`❌ Error conectando Spotify: ${err.message}`);
+    }
+}
+
+async function disconnectSpotify() {
+    try {
+        await fetch(apiUrl('/api/spotify/logout'), {
+            method: 'POST',
+            credentials: 'include'
+        });
+        await refreshSpotifyStatus();
+    } catch (err) {
+        alert("❌ No se pudo desconectar Spotify.");
+    }
+}
+
+async function refreshSpotifyStatus() {
+    const statusText = document.getElementById('spotifyStatusText');
+    const connectBtn = document.getElementById('spotifyConnectBtn');
+    const disconnectBtn = document.getElementById('spotifyDisconnectBtn');
+    try {
+        const response = await fetch(apiUrl('/api/spotify/status'), { credentials: 'include' });
+        const data = await response.json();
+        if (data.connected) {
+            statusText.textContent = `Conectado: ${data.user.display_name}`;
+            connectBtn.classList.add('hidden');
+            disconnectBtn.classList.remove('hidden');
+        } else {
+            statusText.textContent = 'Spotify no conectado';
+            connectBtn.classList.remove('hidden');
+            disconnectBtn.classList.add('hidden');
+        }
+    } catch (err) {
+        statusText.textContent = 'No se pudo validar Spotify';
+        connectBtn.classList.remove('hidden');
+        disconnectBtn.classList.add('hidden');
     }
 }
 

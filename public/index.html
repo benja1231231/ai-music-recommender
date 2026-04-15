@@ -26,6 +26,11 @@
                     <button class="tab" data-mode="contenido">🎸 Artista Exacto</button>
                     <button class="tab" data-mode="spotify_import">🟢 Importar Playlist</button>
                 </div>
+                <div class="spotify-auth-row" style="margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap;">
+                    <button id="spotifyConnectBtn">Conectar Spotify</button>
+                    <button id="spotifyDisconnectBtn" class="hidden">Desconectar Spotify</button>
+                    <span id="spotifyStatusText" style="display:flex;align-items:center;color:#cbd5e1;font-size:0.9rem;"></span>
+                </div>
                 
                 <div class="input-group">
                     <input type="text" id="searchInput" placeholder="Ej: quiero música alegre para el gym sin voces...">
@@ -57,6 +62,7 @@
         </main>
     </div>
 
+    <script src="config.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

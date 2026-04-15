@@ -51,6 +51,55 @@ La red captura algoritmicamente una colisión balanceada (Stateless) donde compi
     ```
 5. **Abre la App:** Dirígete a `http://localhost:8000` en tu navegador. 
 
+## 🚀 Deploy de Producción (Vercel + Backend Python)
+
+Para este proyecto, la arquitectura recomendada es:
+- **Frontend estático** en Vercel (`public/`)
+- **Backend FastAPI** en un servicio persistente (Render/Railway/Fly/VPS)
+
+### 1) Backend (FastAPI)
+
+1. Sube el repo al proveedor backend.
+2. Configura comando de inicio:
+   ```bash
+   uvicorn src.server:app --host 0.0.0.0 --port $PORT
+   ```
+3. Configura variables de entorno usando `.env.example`.
+4. Asegura que `SPOTIPY_REDIRECT_URI` apunte a:
+   - `https://tu-backend.com/api/spotify/callback`
+5. Carga el dataset en el backend (`data/spotify_data.csv`) o desde almacenamiento externo.
+
+### 2) Frontend (Vercel)
+
+1. Importa el repo en Vercel.
+2. Framework preset: **Other**.
+3. Build command: vacío.
+4. Output directory: `public`.
+5. Edita `public/config.js` para apuntar tu backend real:
+   ```js
+   window.APP_CONFIG = { API_BASE_URL: "https://tu-backend.com" };
+   ```
+
+### 3) Spotify OAuth (usuarios web)
+
+- La web usa endpoints:
+  - `GET /api/spotify/login`
+  - `GET /api/spotify/callback`
+  - `GET /api/spotify/status`
+  - `POST /api/spotify/logout`
+- Cada usuario conecta su cuenta y después puede exportar playlists desde la UI.
+- Importación de playlists:
+  - **públicas**: funciona sin login
+  - **privadas**: requiere login Spotify del usuario
+
+### 4) Restricción real de Spotify
+
+Si tu app está en **Development mode** en Spotify Dashboard:
+- solo los usuarios agregados en *User Management* podrán autenticar.
+
+Para abrirlo a público general:
+- solicita extensión de cuota/revisión de la app en Spotify Developer.
+
 ## 🗺️ Arquitectura de Carpetas
 ```
 📁 recomendador-musica/

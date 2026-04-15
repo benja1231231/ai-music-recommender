@@ -1,0 +1,6 @@
+# Este directorio contiene el dataset de Spotify
+# Descarga el archivo "spotify-1million-tracks" desde Kaggle:
+# https://www.kaggle.com/datasets/amitanshjoshi/spotify-1million-tracks
+#
+# Renombra el archivo descargado a: spotify_data.csv
+# y colócalo en este directorio
