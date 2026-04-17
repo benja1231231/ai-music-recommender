@@ -154,6 +154,20 @@ class MusicRecommender:
                 match_artista = self.df['artist_lower'].str.contains(input_limpio, case=False, na=False, regex=False)
                 match_cancion = self.df['track_name_lower'].str.contains(input_limpio, case=False, na=False, regex=False)
             if not match_artista.any() and not match_cancion.any():
+                print(f"\n   [INFO] Sin match local para '{input_usuario}'. Activando fallback Spotify...")
+                if self.spotify:
+                    spotify_fallback = self.spotify.buscar_y_recomendar_por_query(
+                        input_usuario,
+                        limit=cantidad_resultados
+                    )
+                    if spotify_fallback:
+                        recomendaciones = pd.DataFrame(spotify_fallback)
+                        return {
+                            "status": "success",
+                            "data": recomendaciones,
+                            "chart_data": {},
+                            "source": "spotify_fallback"
+                        }
                 print(f"\n   ❌ Lo siento, no pudimos encontrar ningún artista ni canción llamado '{input_usuario}'.")
                 return None
             if match_artista.any() and match_cancion.any():

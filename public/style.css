@@ -421,8 +421,25 @@ button#searchBtn:active {
 .results-header {
     width: 100%;
     display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
     justify-content: center;
+    align-items: center;
     margin-bottom: 1rem;
+}
+
+.results-source-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.45rem 0.8rem;
+    border-radius: 999px;
+    border: 1px solid var(--glass-border);
+    background: rgba(139, 92, 246, 0.18);
+    color: #ddd6fe;
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.2px;
 }
 
 @keyframes fadeIn {

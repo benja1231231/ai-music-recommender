@@ -223,3 +223,91 @@ class SpotifyManager:
         except Exception as e:
             print(f"[ERROR] Extrayendo Playlist: {e}")
             return {"tracks": None, "token_info": token_info}
+
+    def _get_best_client(self):
+        # Prioriza cliente autenticado de usuario local; fallback a credenciales de app.
+        return self.sp if self.sp else self.get_public_client()
+
+    def buscar_y_recomendar_por_query(self, query: str, limit: int = 15):
+        """
+        Fallback híbrido:
+        1) Busca la canción en Spotify.
+        2) Usa el primer match como seed para obtener recomendaciones relacionadas.
+        3) Devuelve formato compatible con el frontend actual.
+        """
+        try:
+            sp = self._get_best_client()
+            
+            # Forzar conversión a int de Python puro (evitar numpy.int64 u otros)
+            try:
+                if hasattr(limit, "item"): # Manejar tipos de numpy
+                    limit = limit.item()
+                limit = int(limit)
+            except:
+                limit = 15
+            
+            # Spotify Search permite max 50. Recommendations permite max 100.
+            # Usamos 20 como un límite seguro y estándar.
+            safe_limit = int(max(1, min(limit, 50)))
+            
+            print(f"   [INFO] Buscando seed para: '{query}' (limit={safe_limit})")
+            
+            # Búsqueda inicial del track para obtener el ID
+            search = sp.search(q=query, type="track", limit=1)
+            items = search.get("tracks", {}).get("items", [])
+            
+            seed_id = None
+            if items:
+                seed_track = items[0]
+                seed_id = seed_track.get("id")
+                print(f"   [OK] Seed encontrado: {seed_track.get('name')} ({seed_id})")
+            else:
+                print(f"   [WARN] No se encontró '{query}' en Spotify.")
+
+            rec_tracks = []
+            
+            # 1. Intentar Recomendaciones (si hay seed_id)
+            if seed_id:
+                try:
+                    rec_resp = sp.recommendations(seed_tracks=[seed_id], limit=safe_limit)
+                    rec_tracks = rec_resp.get("tracks", []) or []
+                    if rec_tracks:
+                        print(f"   [OK] {len(rec_tracks)} recomendaciones obtenidas por seed.")
+                except Exception as rec_err:
+                    print(f"   [WARN] recommendations() falló (posible 404): {rec_err}")
+
+            # 2. Fallback: Búsqueda Directa (si no hay recs o no hay seed_id)
+            if not rec_tracks:
+                print(f"   [INFO] Intentando búsqueda directa como fallback para: '{query}'")
+                try:
+                    # Si falla con safe_limit, intentamos con un valor fijo pequeño (10)
+                    try:
+                        fallback_search = sp.search(q=query, type="track", limit=safe_limit)
+                    except:
+                        print(f"   [WARN] Reintentando búsqueda con limit=10 fijo...")
+                        fallback_search = sp.search(q=query, type="track", limit=10)
+                        
+                    rec_tracks = fallback_search.get("tracks", {}).get("items", []) or []
+                    if rec_tracks:
+                        print(f"   [OK] {len(rec_tracks)} tracks encontrados vía búsqueda directa.")
+                except Exception as search_err:
+                    print(f"   [ERROR] Fallback de búsqueda también falló: {search_err}")
+
+            out = []
+            for idx, track in enumerate(rec_tracks):
+                artists = track.get("artists", [])
+                artist_name = artists[0]["name"] if artists else "Unknown"
+                track_name = track.get("name", "Unknown")
+                popularity = float(track.get("popularity", 50))
+                match_percent = max(1.0, 100.0 - (idx * 4.0))
+                out.append({
+                    "track_name": track_name,
+                    "artist": artist_name,
+                    "popularity": popularity,
+                    "track_genre": "N/A",
+                    "match_percent": match_percent
+                })
+            return out
+        except Exception as e:
+            print(f"   [ERROR] Error crítico en buscar_y_recomendar: {e}")
+            return []

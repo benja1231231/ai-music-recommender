@@ -23,17 +23,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-print("Iniciando Motor AI para Web...")
-motor = MusicRecommender()
+def get_motor(request: Request) -> MusicRecommender:
+    return request.app.state.motor
 
-# Ruta local del dataset
-engine_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'spotify_data.csv')
+@app.on_event("startup")
+async def startup_event():
+    print("Iniciando Motor AI para Web...")
+    motor = MusicRecommender()
 
-if os.path.exists(engine_path):
-    motor.preparar_dataset(engine_path)
-else:
-    print(f"[WARN] Dataset no encontrado en {engine_path}. Cargando modo prueba.")
-    motor.preparar_dataset()
+    # Ruta local del dataset
+    engine_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'spotify_data.csv')
+
+    if os.path.exists(engine_path):
+        motor.preparar_dataset(engine_path)
+    else:
+        print(f"[WARN] Dataset no encontrado en {engine_path}. Cargando modo prueba.")
+        motor.preparar_dataset()
+
+    app.state.motor = motor
 
 from typing import Optional
 
@@ -51,6 +58,7 @@ class ExportRequest(BaseModel):
 async def recommend(request_data: QueryRequest, request: Request):
     print(f"Buscando: '{request_data.query}' en modo: {request_data.mode}")
     try:
+        motor = get_motor(request)
         spotify_token = request.session.get("spotify_token")
         resultado = motor.recomendar(
             request_data.query,
@@ -87,7 +95,8 @@ async def recommend(request_data: QueryRequest, request: Request):
                 return {
                     "status": "success",
                     "data": lista_datos,
-                    "chart_data": chart_data
+                    "chart_data": chart_data,
+                    "source": resultado.get("source", "local")
                 }
             return resultado
             
@@ -100,6 +109,7 @@ async def recommend(request_data: QueryRequest, request: Request):
 
 @app.post("/api/export")
 async def export_to_spotify(request_data: ExportRequest, request: Request):
+    motor = get_motor(request)
     if not motor.spotify:
         return {"status": "error", "message": "Spotify no configurado en el servidor."}
 
@@ -125,7 +135,8 @@ async def export_to_spotify(request_data: ExportRequest, request: Request):
         return {"status": "error", "message": str(e)}
 
 @app.get("/api/spotify/login")
-async def spotify_login():
+async def spotify_login(request: Request):
+    motor = get_motor(request)
     if not motor.spotify:
         raise HTTPException(status_code=503, detail="Spotify no configurado en este servidor.")
     auth_url = motor.spotify.get_authorize_url()
@@ -133,6 +144,7 @@ async def spotify_login():
 
 @app.get("/api/spotify/callback")
 async def spotify_callback(code: str, request: Request):
+    motor = get_motor(request)
     if not motor.spotify:
         raise HTTPException(status_code=503, detail="Spotify no configurado en este servidor.")
     try:
@@ -146,6 +158,7 @@ async def spotify_callback(code: str, request: Request):
 
 @app.get("/api/spotify/status")
 async def spotify_status(request: Request):
+    motor = get_motor(request)
     if not motor.spotify:
         return {"status": "error", "connected": False, "message": "Spotify no configurado."}
     token_info = request.session.get("spotify_token")
@@ -188,4 +201,4 @@ if not os.path.exists(frontend_path):
 app.mount("/", StaticFiles(directory=frontend_path, html=True), name="public")
 
 if __name__ == "__main__":
-    uvicorn.run("server:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run("server:app", host="127.0.0.1", port=8000, reload=False)

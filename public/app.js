@@ -35,6 +35,25 @@ document.getElementById('spotifyConnectBtn').addEventListener('click', () => con
 document.getElementById('spotifyDisconnectBtn').addEventListener('click', () => disconnectSpotify());
 refreshSpotifyStatus();
 
+function setResultsSourceBadge(source) {
+    const badge = document.getElementById('resultsSourceBadge');
+    if (!badge) return;
+
+    if (source === 'spotify_fallback') {
+        badge.textContent = 'Fuente: Spotify en tiempo real';
+        badge.classList.remove('hidden');
+        return;
+    }
+
+    if (source === 'local') {
+        badge.textContent = 'Fuente: Motor IA local (dataset)';
+        badge.classList.remove('hidden');
+        return;
+    }
+
+    badge.classList.add('hidden');
+}
+
 // Lógica Funcional Async a Backend Python
 async function performSearch(overrideType = null, overrideIndex = null) {
     console.log("🚀 performSearch iniciada");
@@ -54,6 +73,7 @@ async function performSearch(overrideType = null, overrideIndex = null) {
 
     wrapper.classList.add('hidden');
     exportBtn.classList.add('hidden');
+    setResultsSourceBadge(null);
     errorMsg.classList.add('hidden');
     loader.classList.remove('hidden');
 
@@ -88,6 +108,7 @@ async function performSearch(overrideType = null, overrideIndex = null) {
         if(data.status === 'success') {
             currentRecommendations = data.data;
             console.log("✅ Recomendaciones recibidas:", currentRecommendations.length);
+            setResultsSourceBadge(data.source || 'local');
             
             // Mostrar el contenedor de resultados
             wrapper.classList.remove('hidden');
