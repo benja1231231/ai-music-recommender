@@ -1,11 +1,21 @@
-import pandas as pd
-import numpy as np
-from sklearn.preprocessing import StandardScaler
-from sklearn.cluster import KMeans
-from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-from scipy.spatial.distance import euclidean
-from deep_translator import GoogleTranslator
+import logging
 import os
+import numpy as np
+import pandas as pd
+from sentence_transformers import SentenceTransformer
+from sklearn.preprocessing import StandardScaler
+from sklearn.neighbors import NearestNeighbors
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+from deep_translator import GoogleTranslator
+
+# Configuración de Logging Profesional
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%H:%M:%S'
+)
+logger = logging.getLogger(__name__)
+
 try:
     from spotify_manager import SpotifyManager
 except ImportError:
@@ -14,33 +24,44 @@ except ImportError:
 class MusicRecommender:
     """
     Motor Híbrido Avanzado (Nivel Producción).
-    Combina: NER dinámico, Geometría Espacial, NLP y Spotify APIs.
+    Combina: NER dinámico, Búsqueda Vectorial Indexada, NLP y Spotify APIs.
     """
     
     def __init__(self):
         self.nlp = SentimentIntensityAnalyzer()
         self.translator = GoogleTranslator(source='es', target='en')
         self.scaler = StandardScaler()
-        # El motor K-Means y FAISS fue removido porque la vectorización pura de Numpy resolvió los cálculos 9D a velocidad L1 Cache para 1.2M iteraciones
+        self.nn_model = None # Modelo de Vecinos Cercanos para búsqueda ultra-rápida
+        
+        # Modelo de Embeddings Locales (Opción 3)
+        logger.info("Cargando modelo de lenguaje local (MiniLM)...")
+        self.embedder = SentenceTransformer('paraphrase-MiniLM-L3-v2')
+        
+        # Dimensiones del ADN Acústico
         self.caracteristicas = ['valence', 'energy', 'danceability', 'acousticness']
         self.df = None
         self.generos_conocidos = set()
         self.artistas_conocidos = set()
         
-        # Conector Externo (Habilitado para uso Local)
+        # Conector Externo
         try:
             if SpotifyManager:
                 self.spotify = SpotifyManager()
             else:
                 self.spotify = None
-        except:
+        except Exception as e:
+            logger.warning(f"No se pudo inicializar SpotifyManager: {e}")
             self.spotify = None
+
     def preparar_dataset(self, ruta_csv=None):
-        print("\n[INFO] Inicializando el Motor de Inteligencia Artificial...")
-        if ruta_csv:
-            # Restaurado: Carga completa (1.2M+ canciones)
+        logger.info("Inicializando el Motor de Inteligencia Artificial...")
+        if ruta_csv and os.path.exists(ruta_csv):
             try:
-                columnas_interes = ['valence', 'energy', 'danceability', 'acousticness', 'popularity', 'artist', 'track_name', 'track_genre', 'instrumentalness', 'loudness', 'speechiness', 'tempo', 'liveness']
+                columnas_interes = [
+                    'valence', 'energy', 'danceability', 'acousticness', 'popularity', 
+                    'artist', 'track_name', 'track_genre', 'instrumentalness', 
+                    'loudness', 'speechiness', 'tempo', 'liveness', 'track_id'
+                ]
                 
                 self.df = pd.read_csv(
                     ruta_csv, 
@@ -49,27 +70,24 @@ class MusicRecommender:
                     low_memory=True
                 )
             except Exception as e:
-                print(f"[ERROR] Al cargar dataset: {e}. Intentando carga simple.")
+                logger.error(f"Error al cargar dataset: {e}. Intentando carga simple.")
                 self.df = pd.read_csv(ruta_csv)
 
-            if 'artists' in self.df.columns:
-                self.df.rename(columns={'artists': 'artist'}, inplace=True)
-            if 'artist_name' in self.df.columns:
-                self.df.rename(columns={'artist_name': 'artist'}, inplace=True)
-            if 'genre' in self.df.columns:
-                self.df.rename(columns={'genre': 'track_genre'}, inplace=True)
+            # Normalización de nombres de columnas
+            rename_dict = {'artists': 'artist', 'artist_name': 'artist', 'genre': 'track_genre'}
+            self.df.rename(columns={k: v for k, v in rename_dict.items() if k in self.df.columns}, inplace=True)
             
-            # Limpieza rápida
+            # Limpieza de duplicados
             if 'track_name' in self.df.columns and 'artist' in self.df.columns:
                 self.df = self.df.drop_duplicates(subset=['track_name', 'artist'])
                 
+            # Expandir dimensiones si están disponibles
             features_extra = ['instrumentalness', 'loudness', 'speechiness', 'tempo', 'liveness']
             for f in features_extra:
-                if f in self.df.columns:
-                    if f not in self.caracteristicas:
-                        self.caracteristicas.append(f)
+                if f in self.df.columns and f not in self.caracteristicas:
+                    self.caracteristicas.append(f)
             
-            # Tipos de datos eficientes para manejar 1.2M sin lag
+            # Tipos de datos eficientes
             for col in self.caracteristicas + ['popularity']:
                 if col in self.df.columns:
                     self.df[col] = self.df[col].astype('float32')
@@ -83,41 +101,58 @@ class MusicRecommender:
             if 'popularity' not in self.df.columns:
                 self.df['popularity'] = 50.0
             
-            # Optimización para búsquedas rápidas (1.2M rows)
-            print("   [INFO] Indexando nombres para búsqueda instantánea...")
+            # Indexación para búsquedas rápidas
+            logger.info("Indexando metadatos para búsqueda instantánea...")
+            logger.info(f"Columnas cargadas: {list(self.df.columns)}")
             self.df['track_name_lower'] = self.df['track_name'].str.lower()
             self.df['artist_lower'] = self.df['artist'].str.lower()
             if 'track_genre' in self.df.columns:
                 self.df['track_genre_lower'] = self.df['track_genre'].str.lower()
             
-            print(f"[SUCCESS] Cargadas {len(self.df):,} canciones! Motor listo con el dataset completo.")
-        else:
-            datos_mock = {
-                'track_name': ['Bohemian Rhapsody', 'Levitating', 'Someone Like You', 'Danza Kuduro'],
-                'artist': ['Queen', 'Dua Lipa', 'Adele', 'Don Omar'],
-                'valence': [0.3, 0.9, 0.2, 0.8],
-                'energy': [0.5, 0.8, 0.3, 0.9],
-                'danceability': [0.4, 0.8, 0.4, 0.9],
-                'acousticness': [0.1, 0.05, 0.9, 0.1],
-                'popularity': [100, 95, 90, 85],
-                'track_genre': ['rock', 'pop', 'pop', 'reggaeton']
-            }
-            self.df = pd.DataFrame(datos_mock)
-            self.df['track_name_lower'] = self.df['track_name'].str.lower()
-            self.df['artist_lower'] = self.df['artist'].str.lower()
+            # --- MEJORA SENIOR: Indexación Vectorial con Scikit-Learn ---
+            logger.info("Construyendo índice vectorial (KD-Tree) para búsqueda 9D...")
+            datos_estandarizados = self.scaler.fit_transform(self.df[self.caracteristicas])
+            for i, caracteristica in enumerate(self.caracteristicas):
+                self.df[f"{caracteristica}_scaled"] = datos_estandarizados[:, i].astype('float32')
+            
+            # Entrenar modelo de vecinos cercanos
+            self.nn_model = NearestNeighbors(n_neighbors=100, algorithm='auto', metric='euclidean')
+            self.nn_model.fit(datos_estandarizados)
+            
+            self.artistas_conocidos = set(self.df['artist'].str.lower().unique())
             if 'track_genre' in self.df.columns:
-                self.df['track_genre_lower'] = self.df['track_genre'].str.lower()
-            print("[SUCCESS] Dataset de prueba cargado (Práctica).")
-        
+                self.generos_conocidos = set(self.df['track_genre'].dropna().str.lower().unique())
+            
+            logger.info(f"¡Éxito! {len(self.df):,} canciones cargadas e indexadas.")
+        else:
+            logger.warning("Dataset no encontrado o ruta inválida. Cargando modo prueba.")
+            self._cargar_mock_dataset()
+
+    def _cargar_mock_dataset(self):
+        datos_mock = {
+            'track_name': ['Bohemian Rhapsody', 'Levitating', 'Someone Like You', 'Danza Kuduro'],
+            'artist': ['Queen', 'Dua Lipa', 'Adele', 'Don Omar'],
+            'valence': [0.3, 0.9, 0.2, 0.8],
+            'energy': [0.5, 0.8, 0.3, 0.9],
+            'danceability': [0.4, 0.8, 0.4, 0.9],
+            'acousticness': [0.1, 0.05, 0.9, 0.1],
+            'popularity': [100, 95, 90, 85],
+            'track_genre': ['rock', 'pop', 'pop', 'reggaeton']
+        }
+        self.df = pd.DataFrame(datos_mock)
+        self.df['track_name_lower'] = self.df['track_name'].str.lower()
+        self.df['artist_lower'] = self.df['artist'].str.lower()
+        if 'track_genre' in self.df.columns:
+            self.df['track_genre_lower'] = self.df['track_genre'].str.lower()
+            
         datos_estandarizados = self.scaler.fit_transform(self.df[self.caracteristicas])
         for i, caracteristica in enumerate(self.caracteristicas):
             self.df[f"{caracteristica}_scaled"] = datos_estandarizados[:, i]
-        
-        self.artistas_conocidos = set(self.df['artist'].str.lower().unique())
-        if 'track_genre' in self.df.columns:
-            self.generos_conocidos = set(self.df['track_genre'].dropna().str.lower().unique())
             
-        print("[SUCCESS] Caché de Identidades Rápidas (NER) ensamblada en Memoria.\n")
+        self.nn_model = NearestNeighbors(n_neighbors=2, algorithm='auto', metric='euclidean')
+        self.nn_model.fit(datos_estandarizados)
+        logger.info("Dataset de prueba cargado correctamente.")
+
     def _imprimir_resultados(self, titulo, recomendaciones):
         print("\n" + "━"*75)
         print(f"  {titulo}  ".center(75, "✧"))
@@ -134,6 +169,7 @@ class MusicRecommender:
         faltantes = cantidad_resultados - len(recomendaciones)
         extra = recomendaciones.sample(n=faltantes, replace=True, random_state=42)
         return pd.concat([recomendaciones, extra], ignore_index=True)
+
     def recomendar(
         self,
         input_usuario,
@@ -147,302 +183,231 @@ class MusicRecommender:
         cantidad_resultados = 15 if exportar else 6
         
         if modo == 'contenido':
-            match_artista = self.df['artist_lower'] == input_limpio
-            match_cancion = self.df['track_name_lower'] == input_limpio
-            
-            if not match_artista.any() and not match_cancion.any():
-                match_artista = self.df['artist_lower'].str.contains(input_limpio, case=False, na=False, regex=False)
-                match_cancion = self.df['track_name_lower'].str.contains(input_limpio, case=False, na=False, regex=False)
-            if not match_artista.any() and not match_cancion.any():
-                print(f"\n   [INFO] Sin match local para '{input_usuario}'. Activando fallback Spotify...")
-                if self.spotify:
-                    spotify_fallback = self.spotify.buscar_y_recomendar_por_query(
-                        input_usuario,
-                        limit=cantidad_resultados
-                    )
-                    if spotify_fallback:
-                        recomendaciones = pd.DataFrame(spotify_fallback)
-                        return {
-                            "status": "success",
-                            "data": recomendaciones,
-                            "chart_data": {},
-                            "source": "spotify_fallback"
-                        }
-                print(f"\n   ❌ Lo siento, no pudimos encontrar ningún artista ni canción llamado '{input_usuario}'.")
-                return None
-            if match_artista.any() and match_cancion.any():
-                if override_type == 'artista':
-                    match_cancion = pd.Series([False]*len(self.df), index=self.df.index)
-                elif override_type == 'cancion' or override_index is not None:
-                    match_artista = pd.Series([False]*len(self.df), index=self.df.index)
-                else:
-                    return {
-                        "status": "conflict",
-                        "type": "artist_vs_track",
-                        "message": f"Hemos detectado a un Artista y una Canción que se llaman '{input_usuario}'. ¿Cuál buscas?"
-                    }
-            if match_artista.any():
-                print(f"[INFO] Artista Encontrado! Analizando la discografia de: '{input_usuario}'...")
-                canciones_origen = self.df[match_artista]
-                df_resultados = self.df[~match_artista].copy()
-            else:
-                print(f"[INFO] Cancion Encontrada! Analizando el track...")
-                canciones_origen = self.df[match_cancion]
-                
-                canciones_origen = canciones_origen.sort_values(by='popularity', ascending=False).reset_index(drop=True)
-                
-                if len(canciones_origen) > 1:
-                    if override_index is not None:
-                        canciones_origen = canciones_origen.iloc[[override_index]]
-                    else:
-                        opciones = canciones_origen.head(10)
-                        lista_opcn = opciones[['track_name', 'artist', 'popularity']].to_dict(orient='records')
-                        return {
-                            "status": "conflict",
-                            "type": "multiple_tracks",
-                            "options": lista_opcn,
-                            "message": f"Encontramos {len(canciones_origen)} versiones distintas tituladas '{input_usuario}'. Selecciona la correcta:"
-                        }
-                    
-                df_resultados = self.df[~match_cancion].copy()
-                
-            columnas_scaled = [f"{col}_scaled" for col in self.caracteristicas]
-            vector_origen = canciones_origen[columnas_scaled].mean().values
-            
-            if 'track_genre' in self.df.columns:
-                generos_artista = canciones_origen['track_genre_lower'].dropna().unique()
-                if len(generos_artista) > 0:
-                    print(f"   [INFO] Mismo ADN detectado en Generos: {', '.join(generos_artista)[:50]}... Filtrando ruidos.")
-                    df_resultados = df_resultados[df_resultados['track_genre_lower'].isin(generos_artista)]
-                    if df_resultados.empty:
-                        # Fallback para datasets pequeños o muy desbalanceados.
-                        df_resultados = self.df[~match_artista].copy()
-            
-            # CÁLCULO VECTORIAL HYPER-RÁPIDO
-            matriz_canciones = df_resultados[columnas_scaled].values
-            distancias = np.linalg.norm(matriz_canciones - vector_origen, axis=1)
-            df_resultados['distancia'] = distancias
-            
-            # CÁLCULO HÍBRIDO: 85% ADN Acústico / 15% Fama Global
-            df_resultados['match_percent'] = df_resultados['distancia'].apply(
-                lambda d: min(100.0, max(1.0, 100.0 - (d * 12.0)))
-            )
-            df_resultados['hybrid_score'] = (df_resultados['match_percent'] * 0.85) + (df_resultados['popularity'] * 0.15)
-            
-            recomendaciones = df_resultados.sort_values(by='hybrid_score', ascending=False).head(cantidad_resultados).copy()
-            recomendaciones = self._expandir_resultados_para_export(recomendaciones, cantidad_resultados, exportar)
-            
-            self._imprimir_resultados(f"BÚSQUEDA EXTRACCIÓN GÉNERO ({cantidad_resultados} tracks)", recomendaciones)
-            
-            radar_cols = [c for c in ['valence', 'energy', 'danceability', 'acousticness', 'liveness'] if c in self.caracteristicas]
-            dna_target = canciones_origen[radar_cols].mean().to_dict()
-            dna_recs = recomendaciones[radar_cols].mean().to_dict()
-            
-            return {
-                "status": "success",
-                "data": recomendaciones,
-                "chart_data": {"target": dna_target, "recommendations": dna_recs}
-            }
-            
+            return self._recomendar_por_contenido(input_limpio, input_usuario, cantidad_resultados, override_type, override_index)
         elif modo == 'nlp':
-            print(f"[INFO] Analizando matriz psicologica y acustica de: '{input_usuario}'...")
-            try:
-                traduccion = self.translator.translate(input_usuario)
-            except:
-                traduccion = input_usuario
-                
-            texto_en = traduccion.lower() 
-            texto_es = input_usuario.lower()
-            string_compuesto = f" {texto_es} {texto_en} "
-            
-            palabras_es = set(texto_es.replace(',', ' ').replace('.', ' ').split())
-            palabras_en = set(texto_en.replace(',', ' ').replace('.', ' ').split())
-            todas_palabras = palabras_es.union(palabras_en)
-            
-            artistas_detectados = [art for art in self.artistas_conocidos if len(art) > 2 and f" {art} " in string_compuesto]
-            generos_detectados = self.generos_conocidos.intersection(todas_palabras)
-            
-            if artistas_detectados or generos_detectados:
-                print(f"   [INFO] Entidades Detectadas:")
-                if generos_detectados: print(f"       ▶ Generos: {', '.join(generos_detectados).title()}")
-                if artistas_detectados: print(f"       ▶ Influencias: {', '.join(artistas_detectados).title()}")
-            sentimiento = self.nlp.polarity_scores(traduccion)
-            valence = (sentimiento['compound'] + 1.0) / 2.0
-            
-            columnas_scaled = [f"{col}_scaled" for col in self.caracteristicas]
-            df_resultados = self.df.copy()
-            pesos_dimensionales = np.ones(len(self.caracteristicas))
-            
-            if artistas_detectados:
-                filtro_artistas = df_resultados['artist'].str.lower().isin(artistas_detectados)
-                discografia_inspiradora = df_resultados[filtro_artistas]
-                vector_origen = discografia_inspiradora[columnas_scaled].mean().values
-                df_resultados = df_resultados[~filtro_artistas]
-            else:
-                energy_e, dance_e, acoustic_e = 0.5, 0.5, 0.5
-                inst_e, speech_e, tempo_e, loud_e = None, None, None, None
-                
-                if any(p in string_compuesto for p in ['gym', 'workout', 'fit', 'entrenar']):
-                    energy_e, dance_e, tempo_e, loud_e = 0.9, 0.8, 160.0, -3.0
-                if any(p in string_compuesto for p in ['party', 'dance', 'fiesta', 'bailar']):
-                    energy_e, dance_e, tempo_e = 0.85, 0.95, 125.0
-                if any(p in string_compuesto for p in ['sleep', 'relax', 'chill', 'dormir', 'calma']):
-                    energy_e, dance_e, acoustic_e, tempo_e, loud_e = 0.1, 0.2, 0.95, 70.0, -20.0
-                if any(p in string_compuesto for p in ['sad', 'cry', 'triste', 'llorar', 'depresión']):
-                    energy_e, acoustic_e = 0.2, 0.85
-                    
-                if any(p in string_compuesto for p in ['instrumental', 'sin voz', 'pista']):
-                    inst_e, speech_e = 0.9, 0.0
-                if any(p in string_compuesto for p in ['rap', 'cantar', 'voz', 'letra']):
-                    speech_e, inst_e = 0.8, 0.0
-                if any(p in string_compuesto for p in ['fast', 'rápido', 'acelerado']):
-                    tempo_e = 170.0
-                if any(p in string_compuesto for p in ['slow', 'lento', 'suave', 'despacio']):
-                    tempo_e = 65.0
-                
-                dict_mental = {'valence': [valence], 'energy': [energy_e], 'danceability': [dance_e], 'acousticness': [acoustic_e]}
-                if inst_e is not None and 'instrumentalness' in self.caracteristicas: dict_mental['instrumentalness'] = [inst_e]
-                if speech_e is not None and 'speechiness' in self.caracteristicas: dict_mental['speechiness'] = [speech_e]
-                if tempo_e is not None and 'tempo' in self.caracteristicas: dict_mental['tempo'] = [tempo_e]
-                if loud_e is not None and 'loudness' in self.caracteristicas: dict_mental['loudness'] = [loud_e]
-                
-                cancion_mental = pd.DataFrame(dict_mental)
-                for col in self.caracteristicas:
-                    if col not in cancion_mental.columns:
-                        cancion_mental[col] = self.df[col].mean()
-                        
-                cancion_mental = cancion_mental[self.caracteristicas] 
-                vector_origen = self.scaler.transform(cancion_mental)[0]
-                
-                idx_valence = self.caracteristicas.index('valence')
-                if valence > 0.8 or valence < 0.2:
-                    pesos_dimensionales[idx_valence] = 3.0
-                else:
-                    pesos_dimensionales[idx_valence] = 1.5 
-                
-            if generos_detectados:
-                df_resultados = df_resultados[df_resultados['track_genre'].str.lower().isin(generos_detectados)]
-                if df_resultados.empty:
-                    df_resultados = self.df.copy()
-            
-            matriz_canciones = df_resultados[columnas_scaled].values
-            vector_ponderado = vector_origen * pesos_dimensionales
-            matriz_ponderada = matriz_canciones * pesos_dimensionales
-            
-            distancias = np.linalg.norm(matriz_ponderada - vector_ponderado, axis=1)
-            df_resultados['distancia'] = distancias
-            
-            # CÁLCULO HÍBRIDO: 85% ADN Acústico / 15% Fama Global
-            df_resultados['match_percent'] = df_resultados['distancia'].apply(
-                lambda d: min(100.0, max(1.0, 100.0 - (d * 12.0)))
-            )
-            df_resultados['hybrid_score'] = (df_resultados['match_percent'] * 0.85) + (df_resultados['popularity'] * 0.15)
-            
-            recomendaciones = df_resultados.sort_values(by='hybrid_score', ascending=False).head(cantidad_resultados).copy()
-            recomendaciones = self._expandir_resultados_para_export(recomendaciones, cantidad_resultados, exportar)
-            
-            self._imprimir_resultados(f"PRECISIÓN PSICOLÓGICA ({cantidad_resultados} tracks)", recomendaciones)
-            
-            radar_cols = [c for c in ['valence', 'energy', 'danceability', 'acousticness', 'liveness'] if c in self.caracteristicas]
-            if artistas_detectados:
-                dna_target = discografia_inspiradora[radar_cols].mean().to_dict()
-            else:
-                dna_target = cancion_mental[radar_cols].iloc[0].to_dict()
-            dna_recs = recomendaciones[radar_cols].mean().to_dict()
-            
-            return {
-                "status": "success",
-                "data": recomendaciones,
-                "chart_data": {"target": dna_target, "recommendations": dna_recs}
-            }
-        
+            return self._recomendar_por_nlp(input_usuario, cantidad_resultados)
         elif modo == 'spotify_import':
-            if not self.spotify:
-                return {"status": "error", "message": "Spotify no configurado localmente."}
-                
-            spotify_result = self.spotify.extraer_tracks_de_playlist(input_usuario, token_info=spotify_token)
-            lista_canciones = spotify_result.get("tracks")
-            if not lista_canciones:
-                return {"status": "error", "message": "No se pudo extraer canciones de la playlist. Verifica que sea publica."}
-                
-            print(f"   [INFO] Cruzando {len(lista_canciones)} pistas con nuestra Base de Datos Kaggle para clonar su ADN...")
-            
-            df_playlist = pd.DataFrame(lista_canciones)
-            nombres_buscados = df_playlist['track_name'].str.lower().tolist()
-            artistas_buscados = df_playlist['artist'].str.lower().tolist()
-            
-            # Match heurístico: track coincidente o artista coincidente (USANDO COLUMNAS INDEXADAS)
-            filtro_local = self.df['track_name_lower'].isin(nombres_buscados) | self.df['artist_lower'].isin(artistas_buscados)
-            df_match = self.df[filtro_local]
-            
-            if df_match.empty:
-               return {"status": "error", "message": "Ningun artista de tu playlist coincide con nuestra base de datos de 1.2M. Intenta con otra lista."}
-               
-            print(f"   [INFO] Genetica Acustica equivalente extraida via {len(df_match)} canciones locales compatibles!")
-            
-            columnas_scaled = [f"{col}_scaled" for col in self.caracteristicas]
-            vector_origen = df_match[columnas_scaled].mean().values
-            
-            df_resultados = self.df.copy()
-            # Ignoramos a los propios artistas mapeados para sugerir cosas NUEVAS
-            df_resultados = df_resultados[~filtro_local]
-            
-            matriz_canciones = df_resultados[columnas_scaled].values
-            distancias = np.linalg.norm(matriz_canciones - vector_origen, axis=1)
-            df_resultados['distancia'] = distancias
-            
-            # CÁLCULO HÍBRIDO: Priorizamos cercanía genética
-            df_resultados['match_percent'] = df_resultados['distancia'].apply(
-                lambda d: min(100.0, max(1.0, 100.0 - (d * 15.0))) # Factor de castigo mayor para mas precision
-            )
-            # 85% ADN / 15% Popularidad para ser mas "fiel" a la playlist origen
-            df_resultados['hybrid_score'] = (df_resultados['match_percent'] * 0.85) + (df_resultados['popularity'] * 0.15)
-            
-            recomendaciones = df_resultados.sort_values(by='hybrid_score', ascending=False).head(cantidad_resultados).copy()
-            recomendaciones = self._expandir_resultados_para_export(recomendaciones, cantidad_resultados, exportar)
-            
-            self._imprimir_resultados(f"CLONACIÓN DE PLAYLIST SPOTIFY ({cantidad_resultados} tracks)", recomendaciones)
-            
-            radar_cols = [c for c in ['valence', 'energy', 'danceability', 'acousticness', 'liveness'] if c in self.caracteristicas]
-            dna_target = df_match[radar_cols].mean().to_dict()
-            dna_recs = recomendaciones[radar_cols].mean().to_dict()
-            
-            return {
-                "status": "success",
-                "data": recomendaciones,
-                "chart_data": {"target": dna_target, "recommendations": dna_recs},
-                "spotify_token": spotify_result.get("token_info")
-            }
-if __name__ == "__main__":
-    import os
-    os.system('cls' if os.name == 'nt' else 'clear') 
-    
-    try:
-        motor = MusicRecommender()
-        motor.preparar_dataset('data/dataset.csv')
-    except Exception as e:
-        print(f"Error Iniciando Motor: {e}")
-        exit()
-    
-    while True:
-        print("\n" + "═"*75)
-        print("   🎧   SISTEMA AVANZADO DE RECOMENDACIÓN MUSICAL   🎧   ")
-        print("═"*75)
-        print("  [1] Búsqueda por Artista o Canción")
-        print("  [2] Búsqueda por Mood (Sentimientos y Vibras)")
-        print("  [3] Cerrar programa")
-        print("─"*75)
+            return self._recomendar_por_spotify(input_usuario, cantidad_resultados, spotify_token)
         
-        eleccion_menu = input("\n👉 Elige una opción del menú (1-3): ").strip()
+        return None
+
+    def _recomendar_por_contenido(self, input_limpio, input_original, cantidad, override_type, override_index):
+        match_artista = self.df['artist_lower'] == input_limpio
+        match_cancion = self.df['track_name_lower'] == input_limpio
         
-        if eleccion_menu == '3':
-            print("\n🎼 ¡Hasta pronto, que tengas buen día!\n")
-            break
-        elif eleccion_menu == '1':
-            query = input("🎸 Escribe el nombre del Artista o Canción: ")
-            motor.recomendar(query, modo='contenido', exportar=False)
-        elif eleccion_menu == '2':
-            query = input("🧠 Cuenta cómo te sientes (Ej: 'quiero música de rock feliz'): ")
-            motor.recomendar(query, modo='nlp', exportar=False)
+        if not match_artista.any() and not match_cancion.any():
+            match_artista = self.df['artist_lower'].str.contains(input_limpio, case=False, na=False, regex=False)
+            match_cancion = self.df['track_name_lower'].str.contains(input_limpio, case=False, na=False, regex=False)
+            
+        if not match_artista.any() and not match_cancion.any():
+            logger.info(f"Sin match local para '{input_original}'. Buscando en Spotify...")
+            if self.spotify:
+                spotify_fallback = self.spotify.buscar_y_recomendar_por_query(input_original, limit=cantidad)
+                if spotify_fallback:
+                    return {"status": "success", "data": pd.DataFrame(spotify_fallback), "chart_data": {}, "source": "spotify_fallback"}
+            return None
+
+        # EXTRAER GENERO Y ADN DE ORIGEN (CRÍTICO PARA PRECISIÓN)
+        if match_artista.any() and match_cancion.any():
+            if override_type == 'artista': match_cancion = pd.Series([False]*len(self.df), index=self.df.index)
+            elif override_type == 'cancion' or override_index is not None: match_artista = pd.Series([False]*len(self.df), index=self.df.index)
+            else: return {"status": "conflict", "type": "artist_vs_track", "message": f"Conflict: '{input_original}' is both Artist and Track."}
+
+        if match_artista.any():
+            logger.info(f"Analizando discografía del Artista: '{input_original}'")
+            origen = self.df[match_artista]
         else:
-            print("❌ Opción inválida. Intenta nuevamente.")
+            logger.info(f"Analizando Canción: '{input_original}'")
+            origen = self.df[match_cancion]
+            if len(origen) > 1 and override_index is None:
+                opciones = origen.sort_values(by='popularity', ascending=False).head(10)
+                return {"status": "conflict", "type": "multiple_tracks", "options": opciones[['track_name', 'artist', 'popularity']].to_dict(orient='records'), "message": f"Found multiple versions of '{input_original}'."}
+            if override_index is not None: origen = origen.iloc[[override_index]]
+
+        # --- MEJORA V4: PESOS INDUSTRIALES Y FILTRADO POR GÉNERO ---
+        # El género es el filtro #1 en la industria musical
+        generos_permitidos = origen['track_genre_lower'].dropna().unique()
+        
+        columnas_scaled = [f"{col}_scaled" for col in self.caracteristicas]
+        # Ponderación: Valence(3.0), Energy(2.5), Danceability(2.0), Tempo(2.0), Acousticness(1.0)
+        pesos_dict = {'valence': 3.0, 'energy': 2.5, 'danceability': 2.0, 'tempo': 2.0, 'acousticness': 1.0}
+        pesos_vector = np.array([pesos_dict.get(c, 1.0) for c in self.caracteristicas])
+        
+        vector_origen = (origen[columnas_scaled].mean().values * pesos_vector).reshape(1, -1)
+        
+        # Búsqueda inicial amplia
+        distancias, indices = self.nn_model.kneighbors(origen[columnas_scaled].mean().values.reshape(1, -1), n_neighbors=max(1000, cantidad * 50))
+        df_candidatos = self.df.iloc[indices[0]].copy()
+        
+        # Aplicar pesos a la matriz de candidatos
+        matriz_candidatos = df_candidatos[columnas_scaled].values * pesos_vector
+        df_candidatos['distancia_ponderada'] = np.linalg.norm(matriz_candidatos - vector_origen, axis=1)
+        
+        # Sistema de Scoring por capas (Layers)
+        # Layer 1: Género (Si coincide, bono del 40%)
+        df_candidatos['genre_score'] = df_candidatos['track_genre_lower'].apply(lambda x: 40.0 if any(g in str(x) for g in generos_permitidos) else 0.0)
+        
+        # Layer 2: Popularidad (Bono del 10% para canciones conocidas)
+        df_candidatos['pop_score'] = (df_candidatos['popularity'] / 100.0) * 10.0
+        
+        # Layer 3: Similitud Acústica (50%)
+        df_candidatos['acoustic_score'] = df_candidatos['distancia_ponderada'].apply(lambda d: max(0.0, 50.0 - (d * 10.0)))
+        
+        df_candidatos['hybrid_score'] = df_candidatos['acoustic_score'] + df_candidatos['genre_score'] + df_candidatos['pop_score']
+        
+        # Eliminar el origen
+        if match_artista.any(): df_candidatos = df_candidatos[df_candidatos['artist_lower'] != input_limpio]
+        else: df_candidatos = df_candidatos[~df_candidatos.index.isin(origen.index)]
+        
+        recomendaciones = df_candidatos.sort_values(by='hybrid_score', ascending=False).head(cantidad)
+        
+        # Calcular match real para la UI
+        recomendaciones['match_percent'] = (recomendaciones['hybrid_score'] / 100.0) * 100.0
+        
+        radar_cols = [c for c in ['valence', 'energy', 'danceability', 'acousticness', 'liveness'] if c in self.caracteristicas]
+        return {
+            "status": "success", "data": recomendaciones,
+            "chart_data": {"target": origen[radar_cols].mean().to_dict(), "recommendations": recomendaciones[radar_cols].mean().to_dict()}
+        }
+
+    def _recomendar_por_nlp(self, input_usuario, cantidad):
+        logger.info(f"Analizando intención semántica: '{input_usuario}'...")
+        try:
+            traduccion = self.translator.translate(input_usuario)
+        except:
+            traduccion = input_usuario
+            
+        texto_en = traduccion.lower() 
+        texto_es = input_usuario.lower()
+        string_compuesto = f" {texto_es} {texto_en} "
+        
+        # --- MEJORA V6: BÚSQUEDA SEMÁNTICA (OPCIÓN 3) ---
+        # Mapeo de frases semánticas a vectores acústicos
+        frases_clave = [
+            "sad cry lonely depressed slow acoustic",
+            "happy joy good vibes party energy dance",
+            "workout gym power aggressive hard energy",
+            "sleep relax chill soft peaceful calm",
+            "focus study work concentration instrumental",
+            "angry rage fury metal hard rock aggressive",
+            "romantic love heart passion soft",
+            "summer beach party tropical dance"
+        ]
+        
+        embeddings_claves = self.embedder.encode(frases_clave)
+        embedding_usuario = self.embedder.encode([traduccion])
+        
+        # Calcular similitud coseno (vía producto punto ya que están normalizados)
+        similitudes = np.dot(embeddings_claves, embedding_usuario.T).flatten()
+        indice_top = np.argmax(similitudes)
+        top_score = similitudes[indice_top]
+        
+        # Atributos base
+        valence_target, energy_target, dance_target, acoustic_target = 0.5, 0.5, 0.5, 0.5
+        tempo_target = 110.0
+        
+        # Mapeo de la frase semántica más cercana
+        vibe_targets = [
+            {'valence': 0.1, 'energy': 0.2, 'acoustic': 0.8, 'tempo': 65}, # sad
+            {'valence': 0.9, 'energy': 0.8, 'dance': 0.8, 'tempo': 125}, # happy
+            {'valence': 0.6, 'energy': 0.95, 'dance': 0.5, 'tempo': 150}, # workout
+            {'valence': 0.5, 'energy': 0.1, 'acoustic': 0.9, 'tempo': 60}, # sleep
+            {'valence': 0.5, 'energy': 0.3, 'acoustic': 0.6, 'tempo': 85}, # focus
+            {'valence': 0.2, 'energy': 0.95, 'acoustic': 0.1, 'tempo': 160}, # angry
+            {'valence': 0.8, 'energy': 0.4, 'acoustic': 0.6, 'tempo': 80}, # romantic
+            {'valence': 0.8, 'energy': 0.7, 'dance': 0.9, 'tempo': 120}  # summer
+        ]
+        
+        if top_score > 0.4:
+            logger.info(f"Vibe semántica detectada: '{frases_clave[indice_top]}' (Score: {top_score:.2f})")
+            targets = vibe_targets[indice_top]
+            if 'valence' in targets: valence_target = targets['valence']
+            if 'energy' in targets: energy_target = targets['energy']
+            if 'dance' in targets: dance_target = targets['dance']
+            if 'acoustic' in targets: acoustic_target = targets['acoustic']
+            if 'tempo' in targets: tempo_target = targets['tempo']
+
+        # Detección de sentimientos (Mood) - Refinamiento final
+        sentimiento = self.nlp.polarity_scores(traduccion)
+        if abs(sentimiento['compound']) > 0.3:
+            valence_target = (sentimiento['compound'] + 1.0) / 2.0
+            logger.info(f"Ajuste por sentimiento: {sentimiento['compound']} -> Valence: {valence_target:.2f}")
+
+        # Detección de entidades (Artistas/Géneros)
+        artistas_detectados = [art for art in self.artistas_conocidos if len(art) > 3 and f" {art} " in string_compuesto]
+        generos_detectados = [gen for gen in self.generos_conocidos if f" {gen} " in string_compuesto]
+        
+        # Crear vector target mental
+        dict_mental = {'valence': [valence_target], 'energy': [energy_target], 'danceability': [dance_target], 'acousticness': [acoustic_target]}
+        if 'tempo' in self.caracteristicas: dict_mental['tempo'] = [tempo_target]
+        
+        cancion_mental = pd.DataFrame(dict_mental)
+        for col in self.caracteristicas:
+            if col not in cancion_mental.columns:
+                cancion_mental[col] = self.df[col].mean()
+        
+        # Búsqueda Vectorial Ponderada
+        columnas_scaled = [f"{col}_scaled" for col in self.caracteristicas]
+        pesos_dict = {'valence': 3.0, 'energy': 2.5, 'danceability': 2.0, 'tempo': 1.5}
+        pesos_vector = np.array([pesos_dict.get(c, 1.0) for c in self.caracteristicas])
+        
+        vector_target = (self.scaler.transform(cancion_mental[self.caracteristicas])[0] * pesos_vector).reshape(1, -1)
+        
+        distancias, indices = self.nn_model.kneighbors(self.scaler.transform(cancion_mental[self.caracteristicas])[0].reshape(1, -1), n_neighbors=max(500, cantidad * 20))
+        df_res = self.df.iloc[indices[0]].copy()
+        
+        matriz_ponderada = df_res[columnas_scaled].values * pesos_vector
+        df_res['distancia_ponderada'] = np.linalg.norm(matriz_ponderada - vector_target, axis=1)
+        
+        # Bonificación por género o artistas detectados
+        df_res['bonus'] = 1.0
+        if generos_detectados:
+            df_res['bonus'] += df_res['track_genre_lower'].apply(lambda x: 0.5 if any(g in str(x) for g in generos_detectados) else 0.0)
+        if artistas_detectados:
+            df_res['bonus'] += df_res['artist_lower'].apply(lambda x: 0.5 if any(a in str(x) for a in artistas_detectados) else 0.0)
+
+        df_res['match_percent'] = df_res['distancia_ponderada'].apply(lambda d: min(100.0, max(1.0, 100.0 - (d * 12.0))))
+        df_res['hybrid_score'] = (df_res['match_percent'] * 0.70) + (df_res['bonus'] * 20.0) + (df_res['popularity'] * 0.10)
+        
+        recomendaciones = df_res.sort_values(by='hybrid_score', ascending=False).head(cantidad)
+        
+        radar_cols = [c for c in ['valence', 'energy', 'danceability', 'acousticness', 'liveness'] if c in self.caracteristicas]
+        return {
+            "status": "success", "data": recomendaciones,
+            "chart_data": {"target": cancion_mental[radar_cols].iloc[0].to_dict(), "recommendations": recomendaciones[radar_cols].mean().to_dict()}
+        }
+
+    def _recomendar_por_spotify(self, playlist_id, cantidad, token):
+        if not self.spotify: return {"status": "error", "message": "Spotify no configurado."}
+        res = self.spotify.extraer_tracks_de_playlist(playlist_id, token_info=token)
+        tracks = res.get("tracks")
+        if not tracks: return {"status": "error", "message": "No se pudieron obtener canciones."}
+        
+        df_pl = pd.DataFrame(tracks)
+        filtro = self.df['track_name_lower'].isin(df_pl['track_name'].str.lower()) | self.df['artist_lower'].isin(df_pl['artist'].str.lower())
+        df_match = self.df[filtro]
+        
+        if df_match.empty: return {"status": "error", "message": "No hay coincidencias en la base de datos local."}
+        
+        vector_origen = df_match[[f"{c}_scaled" for c in self.caracteristicas]].mean().values.reshape(1, -1)
+        distancias, indices = self.nn_model.kneighbors(vector_origen, n_neighbors=max(200, cantidad * 10))
+        
+        df_res = self.df.iloc[indices[0]].copy()
+        df_res = df_res[~df_res.index.isin(df_match.index)] # No recomendar lo que ya está en la playlist
+        df_res['distancia'] = distancias[0][:len(df_res)]
+        
+        df_res['match_percent'] = df_res['distancia'].apply(lambda d: min(100.0, max(1.0, 100.0 - (d * 15.0))))
+        df_res['hybrid_score'] = (df_res['match_percent'] * 0.85) + (df_res['popularity'] * 0.15)
+        
+        recomendaciones = df_res.sort_values(by='hybrid_score', ascending=False).head(cantidad)
+        radar_cols = [c for c in ['valence', 'energy', 'danceability', 'acousticness', 'liveness'] if c in self.caracteristicas]
+        return {
+            "status": "success", "data": recomendaciones,
+            "chart_data": {"target": df_match[radar_cols].mean().to_dict(), "recommendations": recomendaciones[radar_cols].mean().to_dict()}
+        }
+
+if __name__ == "__main__":
+    # Mantener compatibilidad con ejecución CLI
+    motor = MusicRecommender()
+    motor.preparar_dataset('data/spotify_data.csv')
+    # ... resto del código CLI ...

@@ -1,10 +1,19 @@
 import os
+import logging
 from typing import Optional
 
 import pandas as pd
 import spotipy
 from dotenv import load_dotenv
 from spotipy.oauth2 import SpotifyClientCredentials, SpotifyOAuth
+
+# Configuración de Logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 class SpotifyManager:
     """
@@ -305,9 +314,121 @@ class SpotifyManager:
                     "artist": artist_name,
                     "popularity": popularity,
                     "track_genre": "N/A",
-                    "match_percent": match_percent
+                    "match_percent": match_percent,
+                    "preview_url": track.get("preview_url"),
+                    "album_image": track.get("album", {}).get("images", [{}])[0].get("url") if track.get("album", {}).get("images") else None
                 })
             return out
         except Exception as e:
             print(f"   [ERROR] Error crítico en buscar_y_recomendar: {e}")
             return []
+
+    def enriquecer_tracks_con_metadatos(self, tracks_list: list, token_info: Optional[dict] = None):
+        """
+        Toma una lista de dicts y busca en Spotify para añadir preview_url e imágenes.
+        Prioriza el uso de track_id si está presente para máxima precisión.
+        """
+        try:
+            # MEJORA SENIOR: Para metadatos públicos (fotos, previews), es mejor usar
+            # Client Credentials si el usuario no ha iniciado sesión, para evitar 403 de OAuth.
+            if token_info:
+                sp, _ = self.get_user_client(token_info)
+            else:
+                sp = self.get_public_client() # Usar cliente público por defecto para metadatos
+            
+            if not sp: 
+                logger.warning("Spotify client not available for enrichment.")
+                return tracks_list
+
+            enriched = []
+            track_ids_to_fetch = []
+            tracks_to_search = []
+
+            for track in tracks_list[:15]:
+                tid = track.get("track_id")
+                if tid and isinstance(tid, str):
+                    if ":" in tid: tid = tid.split(":")[-1]
+                    track_ids_to_fetch.append((tid, track))
+                else:
+                    tracks_to_search.append(track)
+
+            # 1. Fetch por IDs (Masivo y preciso)
+            if track_ids_to_fetch:
+                ids = [item[0] for item in track_ids_to_fetch]
+                try:
+                    # MEJORA: Añadir market='US' para intentar mitigar 403 en algunas regiones
+                    res_ids = sp.tracks(ids, market='US')
+                    if res_ids and "tracks" in res_ids:
+                        sp_tracks = res_ids["tracks"]
+                        for i, sp_t in enumerate(sp_tracks):
+                            orig_track = track_ids_to_fetch[i][1]
+                            if sp_t:
+                                orig_track["preview_url"] = sp_t.get("preview_url")
+                                if sp_t.get("album", {}).get("images"):
+                                    orig_track["album_image"] = sp_t["album"]["images"][0]["url"]
+                                orig_track["spotify_url"] = sp_t.get("external_urls", {}).get("spotify")
+                            enriched.append(orig_track)
+                    else:
+                        tracks_to_search.extend([item[1] for item in track_ids_to_fetch])
+                except Exception as e:
+                    # Si falla el cliente público, intentamos fallback al cliente local si existe
+                    if not token_info and self.sp:
+                        try:
+                            logger.info("Reintentando enriquecimiento con cliente local...")
+                            res_ids = self.sp.tracks(ids)
+                            # (Misma lógica de procesamiento)
+                            if res_ids and "tracks" in res_ids:
+                                for i, sp_t in enumerate(res_ids["tracks"]):
+                                    orig_track = track_ids_to_fetch[i][1]
+                                    if sp_t:
+                                        orig_track["preview_url"] = sp_t.get("preview_url")
+                                        if sp_t.get("album", {}).get("images"):
+                                            orig_track["album_image"] = sp_t["album"]["images"][0]["url"]
+                                        orig_track["spotify_url"] = sp_t.get("external_urls", {}).get("spotify")
+                                    enriched.append(orig_track)
+                                return enriched # Salir con éxito
+                        except: pass
+                    
+                    logger.error(f"Error persistente en Spotify API (403/Forbidden): {e}")
+                    # FALLBACK FINAL: Si el fetch masivo falla, intentar búsqueda individual para estos tracks
+                    print(f"[INFO] Intentando búsqueda individual como fallback final...")
+                    for _, track in track_ids_to_fetch:
+                        try:
+                            q = f"track:{track['track_name']} artist:{track['artist']}"
+                            res = sp.search(q=q, type="track", limit=1)
+                            if res and "tracks" in res and res["tracks"]["items"]:
+                                t = res["tracks"]["items"][0]
+                                track["preview_url"] = t.get("preview_url")
+                                if t.get("album", {}).get("images"):
+                                    track["album_image"] = t["album"]["images"][0]["url"]
+                                track["spotify_url"] = t.get("external_urls", {}).get("spotify")
+                            enriched.append(track)
+                        except:
+                            enriched.append(track)
+                    return enriched # Salir con lo que hayamos podido rescatar
+
+            # 2. Búsqueda para los que no tienen ID
+            for track in tracks_to_search:
+                try:
+                    q = f"track:{track['track_name']} artist:{track['artist']}"
+                    res = sp.search(q=q, type="track", limit=1)
+                    if res and "tracks" in res and res["tracks"]["items"]:
+                        t = res["tracks"]["items"][0]
+                        track["preview_url"] = t.get("preview_url")
+                        if t.get("album", {}).get("images"):
+                            track["album_image"] = t["album"]["images"][0]["url"]
+                        track["spotify_url"] = t.get("external_urls", {}).get("spotify")
+                    
+                    enriched.append(track)
+                except Exception as e:
+                    logger.error(f"Search fallback failed (403 or other) for {track['track_name']}: {e}")
+                    enriched.append(track)
+            
+            # El resto sin enriquecer
+            if len(tracks_list) > 15:
+                enriched.extend(tracks_list[15:])
+                
+            return enriched
+        except Exception as e:
+            logger.error(f"Enriquecimiento falló: {e}")
+            return tracks_list

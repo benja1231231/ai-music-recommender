@@ -77,6 +77,13 @@ async function performSearch(overrideType = null, overrideIndex = null) {
     errorMsg.classList.add('hidden');
     loader.classList.remove('hidden');
 
+    const loaderText = document.querySelector('#loader p');
+    if (loaderText) {
+        if (currentMode === 'nlp') loaderText.innerText = "🧠 Analizando tu estado de ánimo y ADN acústico...";
+        else if (currentMode === 'contenido') loaderText.innerText = "🎸 Escaneando 1.2M de canciones para el match perfecto...";
+        else loaderText.innerText = "🕷️ Importando genética de tu playlist...";
+    }
+
     try {
         const payload = {
             query: query,
@@ -108,6 +115,9 @@ async function performSearch(overrideType = null, overrideIndex = null) {
         if(data.status === 'success') {
             currentRecommendations = data.data;
             console.log("✅ Recomendaciones recibidas:", currentRecommendations.length);
+            if (currentRecommendations.length > 0) {
+                console.log("🔍 Primer track recibido:", currentRecommendations[0]);
+            }
             setResultsSourceBadge(data.source || 'local');
             
             // Mostrar el contenedor de resultados
@@ -355,23 +365,116 @@ function closeModal() {
 }
 
 function renderCards(tracks) {
+    console.log("🎨 Ejecutando renderCards con", tracks.length, "tracks");
     const grid = document.getElementById('resultsGrid');
+    if (!grid) {
+        console.error("❌ No se encontró el elemento #resultsGrid");
+        return;
+    }
     grid.innerHTML = '';
 
-    tracks.forEach(track => {
+    if (!tracks || tracks.length === 0) {
+        grid.innerHTML = '<div class="no-results">No se encontraron recomendaciones exactas. Intenta con otra búsqueda.</div>';
+        return;
+    }
+
+    tracks.forEach((track, index) => {
         const div = document.createElement('div');
-        div.className = 'card';
-        // Inyectando Match %
-        let matchPercent = track.match_percent > 0 ? track.match_percent : 0;
+        div.className = 'card visible'; // Forzar visibilidad
+        
+        const matchPercent = track.match_percent > 0 ? track.match_percent : 0;
+        
+        // --- SISTEMA DE RESILIENCIA V4 ---
+        // Si no hay imagen de Spotify, usamos un placeholder generado con las iniciales del artista
+        const albumImg = (track.album_image && track.album_image !== "N/A") 
+            ? track.album_image 
+            : `https://ui-avatars.com/api/?name=${encodeURIComponent(track.artist)}&size=300&background=1e293b&color=8b5cf6&bold=true`;
+        
+        const previewUrl = (track.preview_url && track.preview_url !== "N/A") ? track.preview_url : null;
+        const trackId = track.track_id && track.track_id !== "N/A" ? track.track_id.split(':').pop() : null;
+        const spotifyUrl = track.spotify_url || (trackId ? `https://open.spotify.com/track/${trackId}` : null);
+        
         div.innerHTML = `
             <div class="match-badge">${Math.round(matchPercent)}% Match</div>
-            <h3 style="margin-top: 15px;">${track.track_name}</h3>
-            <p class="artist">${track.artist}</p>
-            <div class="meta">
-                <span>⭐ Pop: ${Math.round(track.popularity)}</span>
-                <span>🎵 ${track.track_genre.toUpperCase().substring(0, 15)}</span>
+            <div class="card-img-container">
+                <img src="${albumImg}" class="card-img" alt="${track.track_name}" 
+                     onerror="this.src='https://www.bensound.com/bensound-img/buddy.jpg'">
+            </div>
+            <div class="card-content">
+                <div class="card-info">
+                    <h3>${track.track_name}</h3>
+                    <p class="artist">${track.artist}</p>
+                    <div class="meta">
+                        <span>⭐ ${Math.round(track.popularity)} Pop</span>
+                        <span>🎵 ${(track.track_genre || 'N/A').toUpperCase()}</span>
+                    </div>
+                </div>
+                <div class="card-actions">
+                    ${previewUrl ? `
+                        <button class="play-btn" onclick="togglePlay(this, '${previewUrl}')">
+                            <span class="icon">▶️</span> Escuchar
+                        </button>
+                    ` : (trackId ? `
+                        <button class="play-btn spotify-direct" onclick="window.open('${spotifyUrl}', '_blank')">
+                            <span class="icon">🎧</span> Escuchar en Spotify
+                        </button>
+                    ` : `
+                        <button class="play-btn disabled" disabled>
+                            <span class="icon">🚫</span> No Audio
+                        </button>
+                    `)}
+                    ${spotifyUrl ? `
+                        <a href="${spotifyUrl}" target="_blank" class="spotify-link-btn">
+                            <img src="https://storage.googleapis.com/pr-newsroom-wp/1/2018/11/Spotify_Logo_RGB_Green.png" style="height: 12px; margin-right: 5px;">
+                            Ver en Spotify
+                        </a>
+                    ` : ''}
+                </div>
             </div>
         `;
         grid.appendChild(div);
     });
+}
+
+let activeAudio = null;
+let activeBtn = null;
+
+function togglePlay(btn, url) {
+    if (activeAudio && activeAudio.src === url) {
+        if (activeAudio.paused) {
+            activeAudio.play();
+            btn.innerHTML = '<span class="icon">⏸️</span> Pausar';
+            btn.classList.add('playing');
+        } else {
+            activeAudio.pause();
+            btn.innerHTML = '<span class="icon">▶️</span> Escuchar';
+            btn.classList.remove('playing');
+        }
+        return;
+    }
+
+    if (activeAudio) {
+        activeAudio.pause();
+        if (activeBtn) {
+            activeBtn.innerHTML = '<span class="icon">▶️</span> Escuchar';
+            activeBtn.classList.remove('playing');
+        }
+    }
+
+    activeAudio = new Audio(url);
+    activeBtn = btn;
+    activeAudio.play();
+    btn.innerHTML = '<span class="icon">⏸️</span> Pausando...'; // Feedback rápido
+    
+    activeAudio.onplaying = () => {
+        btn.innerHTML = '<span class="icon">⏸️</span> Pausar';
+        btn.classList.add('playing');
+    };
+
+    activeAudio.onended = () => {
+        btn.innerHTML = '<span class="icon">▶️</span> Escuchar';
+        btn.classList.remove('playing');
+        activeAudio = null;
+        activeBtn = null;
+    };
 }

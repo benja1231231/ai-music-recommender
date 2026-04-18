@@ -30,3 +30,4 @@ __pycache__/
 # Entorno de Sistema Operativo
 .DS_Store
 Thumbs.db
+.aider*

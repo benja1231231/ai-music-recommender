@@ -72,19 +72,40 @@ async def recommend(request_data: QueryRequest, request: Request):
         if isinstance(resultado, dict):
             if resultado.get("status") == "success":
                 df_resultados = resultado["data"]
-                print(f"[OK] Exito: {len(df_resultados)} resultados encontrados.")
-                cols = ['track_name', 'artist', 'popularity', 'track_genre', 'match_percent']
-                exist_cols = [c for c in cols if c in df_resultados.columns]
+                print(f"[OK] Éxito: {len(df_resultados)} resultados encontrados.")
                 
-                # Asegurar que los datos sean serializables y no contengan NaNs o tipos raros
+                # 1. Seleccionar columnas básicas del dataset
+                base_cols = ['track_name', 'artist', 'popularity', 'track_genre', 'match_percent', 'track_id']
+                available_cols = [c for c in base_cols if c in df_resultados.columns]
+                
+                # Asegurar que track_id esté presente y limpio
+                lista_datos = df_resultados[available_cols].fillna("N/A").to_dict(orient='records')
+                
+                for track in lista_datos:
+                    if 'track_id' in track and track['track_id'] != "N/A":
+                        # Limpiar ID si tiene prefijo
+                        if isinstance(track['track_id'], str) and ":" in track['track_id']:
+                            track['track_id'] = track['track_id'].split(":")[-1]
+                
+                # 2. ENRIQUECIMIENTO (ELIMINADO SÍNCRONAMENTE POR ERRORES 403 Y LATENCIA)
+                # El frontend ahora se encarga de mostrar placeholders o buscar metadatos de forma asíncrona
+                
+                # 3. Limpieza final para JSON (convertir tipos de numpy a nativos de python)
                 import numpy as np
-                df_clean = df_resultados[exist_cols].copy()
-                # Convertir floats de numpy a nativos de python
-                for col in df_clean.select_dtypes(include=['float32', 'float64']).columns:
-                    df_clean[col] = df_clean[col].astype(float)
-                
-                lista_datos = df_clean.fillna("N/A").to_dict(orient='records')
-                
+                for track in lista_datos:
+                    for key, val in track.items():
+                        if isinstance(val, (np.float32, np.float64)):
+                            track[key] = float(val)
+                        elif isinstance(val, (np.int32, np.int64)):
+                            track[key] = int(val)
+                        elif pd.isna(val):
+                            track[key] = "N/A"
+
+                # Debug final
+                if lista_datos:
+                    sample = lista_datos[0]
+                    print(f"[DEBUG] Track enviado al front: {sample.get('track_name')} - Image: {sample.get('album_image') is not None}")
+
                 # Limpiar chart_data también
                 chart_data = resultado.get("chart_data", {})
                 if chart_data:
