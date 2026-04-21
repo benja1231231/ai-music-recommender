@@ -365,44 +365,32 @@ function closeModal() {
 }
 
 function renderCards(tracks) {
-    console.log("🎨 Ejecutando renderCards con", tracks.length, "tracks");
+    console.log("Rendering V3 - No Preview, Big Match");
     const grid = document.getElementById('resultsGrid');
-    if (!grid) {
-        console.error("❌ No se encontró el elemento #resultsGrid");
-        return;
-    }
+    if (!grid) return;
     grid.innerHTML = '';
 
     if (!tracks || tracks.length === 0) {
-        grid.innerHTML = '<div class="no-results">No se encontraron recomendaciones exactas. Intenta con otra búsqueda.</div>';
+        grid.innerHTML = '<div class="no-results">No se encontraron recomendaciones exactas.</div>';
         return;
     }
 
-    tracks.forEach((track, index) => {
+    tracks.forEach((track) => {
         const div = document.createElement('div');
-        div.className = 'card visible'; // Forzar visibilidad
+        div.className = 'card visible'; 
         
-        const matchPercent = track.match_percent > 0 ? track.match_percent : 0;
-        
-        // --- SISTEMA DE RESILIENCIA V4 ---
-        // Si no hay imagen de Spotify, usamos un placeholder generado con las iniciales del artista
-        const albumImg = (track.album_image && track.album_image !== "N/A") 
-            ? track.album_image 
-            : `https://ui-avatars.com/api/?name=${encodeURIComponent(track.artist)}&size=300&background=1e293b&color=8b5cf6&bold=true`;
-        
-        const previewUrl = (track.preview_url && track.preview_url !== "N/A") ? track.preview_url : null;
-        const trackId = track.track_id && track.track_id !== "N/A" ? track.track_id.split(':').pop() : null;
-        const spotifyUrl = track.spotify_url || (trackId ? `https://open.spotify.com/track/${trackId}` : null);
+        const matchPercent = track.match_percent || 0;
+        const trackId = track.track_id ? track.track_id.split(':').pop() : null;
+        const spotifyUrl = track.spotify_url || (trackId ? `https://open.spotify.com/track/${trackId}` : "#");
         
         div.innerHTML = `
-            <div class="match-badge">${Math.round(matchPercent)}% Match</div>
-            <div class="card-img-container">
-                <img src="${albumImg}" class="card-img" alt="${track.track_name}" 
-                     onerror="this.src='https://www.bensound.com/bensound-img/buddy.jpg'">
+            <div class="match-hero">
+                <span class="match-number">${Math.round(matchPercent)}%</span>
+                <span class="match-label">MATCH</span>
             </div>
             <div class="card-content">
                 <div class="card-info">
-                    <h3>${track.track_name}</h3>
+                    <h3 title="${track.track_name}">${track.track_name}</h3>
                     <p class="artist">${track.artist}</p>
                     <div class="meta">
                         <span>⭐ ${Math.round(track.popularity)} Pop</span>
@@ -410,25 +398,10 @@ function renderCards(tracks) {
                     </div>
                 </div>
                 <div class="card-actions">
-                    ${previewUrl ? `
-                        <button class="play-btn" onclick="togglePlay(this, '${previewUrl}')">
-                            <span class="icon">▶️</span> Escuchar
-                        </button>
-                    ` : (trackId ? `
-                        <button class="play-btn spotify-direct" onclick="window.open('${spotifyUrl}', '_blank')">
-                            <span class="icon">🎧</span> Escuchar en Spotify
-                        </button>
-                    ` : `
-                        <button class="play-btn disabled" disabled>
-                            <span class="icon">🚫</span> No Audio
-                        </button>
-                    `)}
-                    ${spotifyUrl ? `
-                        <a href="${spotifyUrl}" target="_blank" class="spotify-link-btn">
-                            <img src="https://storage.googleapis.com/pr-newsroom-wp/1/2018/11/Spotify_Logo_RGB_Green.png" style="height: 12px; margin-right: 5px;">
-                            Ver en Spotify
-                        </a>
-                    ` : ''}
+                    <a href="${spotifyUrl}" target="_blank" class="spotify-link-btn primary">
+                        <img src="https://storage.googleapis.com/pr-newsroom-wp/1/2018/11/Spotify_Logo_RGB_Green.png" style="height: 14px; margin-right: 8px;">
+                        Ver en Spotify
+                    </a>
                 </div>
             </div>
         `;

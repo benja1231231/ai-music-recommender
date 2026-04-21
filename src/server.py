@@ -82,6 +82,11 @@ async def recommend(request_data: QueryRequest, request: Request):
                 lista_datos = df_resultados[available_cols].fillna("N/A").to_dict(orient='records')
                 
                 for track in lista_datos:
+                    # Limpiar match_percent para que no sea 100% si no es el origen
+                    if 'match_percent' in track:
+                        # Asegurar que el valor es float nativo y redondearlo
+                        track['match_percent'] = round(float(track['match_percent']), 1)
+                    
                     if 'track_id' in track and track['track_id'] != "N/A":
                         # Limpiar ID si tiene prefijo
                         if isinstance(track['track_id'], str) and ":" in track['track_id']:
